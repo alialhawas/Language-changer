@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
 
+        preloadLanguageModels()
+
         let controller = MenuBarController()
         menuBarController = controller
 
@@ -25,6 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pipeline = TypingPipeline()
         pipeline.onChange = { [weak debugWindow] snapshot in
             debugWindow?.accept(snapshot)
+        }
+        pipeline.onDecision = { [weak debugWindow] decision in
+            debugWindow?.accept(decision)
+        }
+        pipeline.onAutoApply = { [weak controller] applied in
+            DispatchQueue.main.async { controller?.showAutoApply(applied) }
+        }
+        pipeline.onSuggest = { [weak controller] _ in
+            DispatchQueue.main.async { controller?.showSuggestion() }
         }
         pipeline.start()
         self.pipeline = pipeline
@@ -52,6 +63,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline?.stop()
     }
 
+    /// The tables are ~800 KB of JSON and word lists. Loading them here, off
+    /// the main thread, keeps the first evaluation from stalling the typing
+    /// queue a second after the user's first keystroke.
+    private func preloadLanguageModels() {
+        DispatchQueue.global(qos: .utility).async {
+            let started = Date()
+            do {
+                for language in Language.allCases {
+                    try LanguageModel.shared(language).preload()
+                }
+            } catch {
+                Log.app.fault(
+                    "language models failed to load: \(String(describing: error), privacy: .public); nothing will ever be detected"
+                )
+                return
+            }
+            let millis = Date().timeIntervalSince(started) * 1000
+            Log.app.info(
+                "language models loaded in \(millis, format: .fixed(precision: 0), privacy: .public) ms"
+            )
+        }
+    }
+
     private func refreshPermissions() {
         let state = Permissions.current()
 
@@ -63,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let capturing = eventTap?.isRunning ?? false
 
         menuBarController?.update(with: state, capturing: capturing)
+        // Detection — and therefore injection — only runs while the tap does.
+        pipeline?.setCaptureActive(capturing && state.accessibility && state.inputMonitoring)
 
         guard state != lastState || capturing != lastCapturing else { return }
         lastState = state

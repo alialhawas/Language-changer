@@ -7,9 +7,10 @@ detects when a word only makes sense under the other layout, and rewrites it in
 place. It runs as a background agent with no dock icon, does no networking, and
 keeps everything it observes on the machine.
 
-Current state: M3 — capture, layout rendering and the offline detection brain
-(language models, guards, segmenter, decision engine). Rewriting the text in
-place lands in M4.
+Current state: M4 — capture, layout rendering, the offline detection brain
+(language models, guards, segmenter, decision engine) and the automatic fix
+itself. While the safety layer is still M5, automatic rewriting is allowlisted
+to TextEdit and nothing else.
 
 ## Prerequisites
 
@@ -94,6 +95,33 @@ from the MIT-licensed
 script is the only thing in the project that touches the network, it only does
 so on a developer machine when `Tools/data/` is cold, and its output is
 committed. See `Sources/DodomaCore/Resources/LICENSES.md` for attribution.
+
+## Automatic fixing
+
+Once both permissions are granted, Dodoma evaluates the buffer one second after
+you stop typing. When the alternate layout reads far better than what is on
+screen, it deletes the offending text, types the corrected text in its place and
+switches the keyboard layout, then flashes `⇄ ع/E` in the menu bar and records a
+`Last fix:` line in the menu.
+
+- Automatic rewriting only happens in TextEdit until the M5 safety layer lands.
+  Everywhere else the decision is evaluated and discarded.
+- A weaker match is only offered, not applied. The suggestion panel is M6, so
+  for now the status item blinks `?` and the verdict appears in the debug
+  window's Decisions section.
+- Nothing is injected while Shift, Command, Control or Option is held; the fix
+  is retried three times and then abandoned. Caps Lock is not a blocker — it is
+  how most of this text gets typed in the first place.
+
+Two preferences are read from `UserDefaults`:
+
+```
+defaults write com.ali.dodoma aggressiveness -string balanced  # or conservative / eager
+defaults write com.ali.dodoma debugLogging   -bool   NO        # YES also logs region text
+```
+
+`debugLogging` is the only switch that lets typed text reach `os_log`, under the
+`decision` category. It is off by default.
 
 ## Granting permissions
 

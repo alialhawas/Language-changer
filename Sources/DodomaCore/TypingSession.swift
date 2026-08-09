@@ -84,6 +84,11 @@ public struct SessionOutcome: Equatable, Sendable {
 public final class TypingSession {
     public static let debugEventLimit = 50
 
+    /// Quiet period after the last keystroke before the buffer is evaluated.
+    /// The single source of truth for the trigger; the owner schedules against
+    /// it and re-checks with `isEvaluationDue` when its timer fires.
+    public static let triggerDelay: TimeInterval = 1.0
+
     private let buffer = TypedBuffer()
     private var lastKeyTimestamp: TimeInterval?
     private var frontmostBundleID: String?
@@ -95,6 +100,58 @@ public final class TypingSession {
     }
 
     public var currentFrontmostBundleID: String? { frontmostBundleID }
+
+    /// Timestamp of the last key that touched the buffer, nil after a reset.
+    public var lastKeyTime: TimeInterval? { lastKeyTimestamp }
+
+    public var isBufferEmpty: Bool { buffer.isEmpty }
+
+    /// True once the user has been quiet for `triggerDelay`.
+    ///
+    /// Pure, and inclusive at the boundary: a timer scheduled exactly
+    /// `triggerDelay` after the keystroke must find the evaluation due, or the
+    /// trigger would need a second round to ever fire.
+    public static func isEvaluationDue(lastKeyTimestamp: TimeInterval, now: TimeInterval) -> Bool {
+        now - lastKeyTimestamp >= triggerDelay
+    }
+
+    /// Runs the detection engine over the current buffer. Nil when there is
+    /// nothing buffered to look at.
+    ///
+    /// No clock, no timer and no mutation: the owner decides *when* to call
+    /// this, the session only knows what the keys were.
+    ///
+    /// The layout the keys were typed under is read off the script of the text
+    /// they produced. That is sound because a buffer never spans an input
+    /// source change: switching layouts resets it.
+    public func evaluate(
+        detector: Detector,
+        policy: AppPolicy,
+        aggressiveness: Aggressiveness,
+        recentlyUndone: Set<String> = []
+    ) -> Detector.Detection? {
+        let keys = buffer.keys
+        guard !keys.isEmpty else { return nil }
+        return detector.detect(
+            keys: keys,
+            typedLanguage: Detector.scriptLanguage(of: buffer.currentText),
+            policy: policy,
+            aggressiveness: aggressiveness,
+            recentlyUndone: recentlyUndone)
+    }
+
+    /// Drops the buffer from outside the input stream.
+    ///
+    /// Used after Dodoma itself rewrote the text on screen: what is on screen
+    /// is no longer what the user typed, so the key history is worthless and
+    /// must not be re-evaluated. Clearing `lastKeyTimestamp` also disarms the
+    /// owner's trigger, which keys off it.
+    @discardableResult
+    public func reset(reason: ResetReason, at now: TimeInterval) -> BufferSnapshot {
+        buffer.reset(reason: reason)
+        lastKeyTimestamp = nil
+        return snapshot(at: now)
+    }
 
     public func snapshot(at now: TimeInterval) -> BufferSnapshot {
         BufferSnapshot(

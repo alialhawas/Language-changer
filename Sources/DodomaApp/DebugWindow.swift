@@ -2,7 +2,7 @@ import AppKit
 import DodomaCore
 import SwiftUI
 
-/// Main-thread mirror of the latest `BufferSnapshot`.
+/// Main-thread mirror of the latest `BufferSnapshot` and `DecisionSnapshot`.
 final class DebugWindowModel: ObservableObject {
     @Published var snapshot = BufferSnapshot(
         text: "",
@@ -11,6 +11,7 @@ final class DebugWindowModel: ObservableObject {
         frontmostBundleID: nil,
         recentEvents: [],
         capturedAt: 0)
+    @Published var decision: DecisionSnapshot?
 }
 
 /// Lazily created window that mirrors the typed buffer.
@@ -32,6 +33,13 @@ final class DebugWindowController {
     func accept(_ snapshot: BufferSnapshot) {
         DispatchQueue.main.async { [weak self] in
             self?.enqueue(snapshot)
+        }
+    }
+
+    /// Decisions arrive at most about once a second, so they are not coalesced.
+    func accept(_ decision: DecisionSnapshot) {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.decision = decision
         }
     }
 
@@ -114,6 +122,11 @@ private struct DebugView: View {
                 .padding(4)
             }
 
+            GroupBox("Decisions") {
+                DecisionPanel(decision: model.decision)
+                    .padding(4)
+            }
+
             Text("Last \(TypingSession.debugEventLimit) events")
                 .font(.headline)
 
@@ -122,7 +135,48 @@ private struct DebugView: View {
                 referenceTime: model.snapshot.capturedAt)
         }
         .padding(16)
-        .frame(minWidth: 480, minHeight: 420)
+        .frame(minWidth: 480, minHeight: 520)
+    }
+}
+
+/// Last evaluation: what was looked at, how it scored and what happened next.
+private struct DecisionPanel: View {
+    let decision: DecisionSnapshot?
+
+    var body: some View {
+        if let decision {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(decision.regionText.isEmpty ? "(no region)" : decision.regionText)
+                    .font(.system(size: 15))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(2)
+
+                HStack(spacing: 16) {
+                    LabelledValue("Verdict", decision.verdict)
+                    LabelledValue("cur / alt", Self.scores(decision))
+                    LabelledValue("Guards", decision.guards)
+                    LabelledValue("Policy", decision.policy)
+                    LabelledValue("Took", String(format: "%.1f ms", decision.durationMillis))
+                }
+
+                HStack(spacing: 16) {
+                    LabelledValue("Reason", decision.reason.isEmpty ? "—" : decision.reason)
+                    LabelledValue("Delete", decision.deleteCount.map(String.init) ?? "—")
+                    LabelledValue("Insert", decision.insertText ?? "—")
+                    LabelledValue("Result", decision.result ?? "—")
+                }
+            }
+        } else {
+            Text("No evaluation yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private static func scores(_ decision: DecisionSnapshot) -> String {
+        String(format: "%.2f / %.2f", decision.currentScore, decision.alternateScore)
     }
 }
 
