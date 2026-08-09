@@ -1,0 +1,94 @@
+# Dodoma detection corpus.  One row per line: TEXT<TAB>EXPECTED.
+# EXPECTED is one of auto_ar auto_en suggest ignore.  Lines starting with #
+# and blank lines are skipped.  Run with:
+#     swift run Dodoma --eval Tests/DodomaCoreTests/Fixtures/corpus.tsv
+#
+# Every row is the text AS TYPED.  The harness picks the layout the text was
+# typed under from its script (Latin -> ABC, Arabic -> Arabic) and asks the
+# detector what it would do.
+#
+# The wrong-layout rows were generated mechanically from the com.apple.keylayout
+# .Arabic key map, so they are exactly what the phrase in the comment produces
+# when the wrong input source is active:
+#
+#   a=ش b=ز c=ذ d=ي e=ث f=ب g=ل h=ا i=ه j=ت k=ن l=م m=و n=ر o=خ p=ح q=ض
+#   r=ق s=س t=ف u=ع v=د w=ص x=ط y=غ z=ظ ;=ك '=؛ ,=، [=ج ]=ة
+#
+# auto_ar rows are Arabic phrases typed while ABC was active (Latin gibberish);
+# auto_en rows are English phrases typed while Arabic was active.  Only the
+# plain, unshifted half of the Arabic map is used, so every row round-trips.
+
+# --- Arabic typed while the English layout was active -> auto_ar ---
+HC MV; HKH HSMDIH HGDML	auto_ar
+lnpfh ;dt phg; hgdml	auto_ar
+hgsghl ugd;l mnpli hggi	auto_ar
+a;nh [bdgh ugd hglshuvi	auto_ar
+hkh nhdp hgfdj fuv amdi	auto_ar
+ljd lmuv hgh[jlhu yvh	auto_ar
+ig dl;k; hnshg hglgt	auto_ar
+hgxrs phn [vh hgdml	auto_ar
+hndv hk hcif hgd hglvnsi	auto_ar
+;g uhl mhkjl fodn	auto_ar
+
+# --- English typed while the Arabic layout was active -> auto_en ---
+اثممخ اخص شقث غخع	auto_en
+فاشرن غخع دثقغ وعذا	auto_en
+سثث غخع فخوخققخص	auto_en
+صاشف فهوث هس فاث وثثفهرل	auto_en
+ه صهمم سثري فاث بهمث	auto_en
+لخخي وخقرهرل ثدثقغخرث	auto_en
+حمثشسث ذشمم وث زشذن	auto_en
+
+# --- Real English -> ignore ---
+please send me the report before the meeting tomorrow	ignore
+i think we should refactor this function next week	ignore
+the quick brown fox jumps over the lazy dog	ignore
+can you review my pull request today	ignore
+we need to fix the memory leak in the parser	ignore
+the server returned an unexpected response	ignore
+let me know if you have any questions	ignore
+thanks for the update i will take a look	ignore
+the build is failing on the release branch	ignore
+remember to update the documentation as well	ignore
+this feature depends on the new layout engine	ignore
+the meeting has been moved to friday afternoon	ignore
+running the tests locally takes about two minutes	ignore
+i am going to grab a coffee before the standup	ignore
+
+# --- Real Arabic -> ignore ---
+صباح الخير كيف كان يومك	ignore
+سوف نجتمع غدا في المكتب	ignore
+ارسلت لك الملف علي البريد	ignore
+الجو جميل اليوم ولا يوجد مطر	ignore
+شكرا لك جدا علي وقتك	ignore
+اريد ان اتعلم لغة جديدة	ignore
+هذا الكتاب مفيد جدا	ignore
+من فضلك اتصل بي بعد الظهر	ignore
+
+# --- Guard classes -> ignore ---
+# URL
+https://example.com/docs/index.html	ignore
+# email address
+ali@example.com	ignore
+# absolute path
+/usr/local/bin/swift build	ignore
+# camelCase identifier
+someCamelCaseName	ignore
+# shell command
+git commit -m fix the parser	ignore
+# hex digest
+3f5a9c2e8b1d4706	ignore
+# version string
+v2.1.3	ignore
+# SCREAMING_SNAKE constant
+ALL_CAPS_CONST	ignore
+
+# --- Borderline: too short or too isolated to rewrite silently -> suggest ---
+sghl	suggest
+fdjkh	suggest
+xuhl	suggest
+wvdr	suggest
+hggi	suggest
+lvnsi	suggest
+check this lvnsi	suggest
+please send hglgt	suggest

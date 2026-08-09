@@ -4,3 +4,4 @@ build/
 .context/
 .DS_Store
 Tools/data/
+__pycache__/

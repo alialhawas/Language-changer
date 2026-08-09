@@ -5,10 +5,11 @@ CONTENTS := $(APP_BUNDLE)/Contents
 SIGN_IDENTITY := Dodoma Dev
 
 FIXTURES := Tests/DodomaCoreTests/Fixtures/layout-tables.json
+CORPUS := Tests/DodomaCoreTests/Fixtures/corpus.tsv
 # SwiftPM resource bundle for the DodomaCore target: <package>_<target>.bundle
 RESOURCE_BUNDLE := Dodoma_DodomaCore.bundle
 
-.PHONY: build bundle sign install run test fixtures logs ngrams clean
+.PHONY: build bundle sign install run test fixtures logs ngrams eval clean
 
 build:
 	swift build -c release
@@ -63,6 +64,9 @@ test:
 # deterministic regardless of which input sources are enabled where they run.
 fixtures:
 	swift run Dodoma --dump-layout-fixtures $(FIXTURES)
+
+eval:
+	swift run Dodoma --eval $(CORPUS)
 
 logs:
 	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --style compact
