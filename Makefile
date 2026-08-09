@@ -5,6 +5,8 @@ CONTENTS := $(APP_BUNDLE)/Contents
 SIGN_IDENTITY := Dodoma Dev
 
 FIXTURES := Tests/DodomaCoreTests/Fixtures/layout-tables.json
+# SwiftPM resource bundle for the DodomaCore target: <package>_<target>.bundle
+RESOURCE_BUNDLE := Dodoma_DodomaCore.bundle
 
 .PHONY: build bundle sign install run test fixtures logs ngrams clean
 
@@ -17,6 +19,14 @@ bundle: build
 	cp "$$(swift build -c release --show-bin-path)/$(APP_NAME)" $(CONTENTS)/MacOS/$(APP_NAME)
 	cp Resources/Info.plist $(CONTENTS)/Info.plist
 	@find Resources -mindepth 1 -maxdepth 1 ! -name Info.plist -exec cp -R {} $(CONTENTS)/Resources/ \;
+	@# SPM emits DodomaCore's word lists and bigram tables as a separate bundle.
+	@# Bundle.module looks for it next to the executable and in the app's
+	@# Resources, so it has to be copied in or scoring silently reads nothing.
+	@BIN="$$(swift build -c release --show-bin-path)"; \
+	if [ ! -d "$$BIN/$(RESOURCE_BUNDLE)" ]; then \
+		echo "error: $(RESOURCE_BUNDLE) not found in $$BIN"; exit 1; \
+	fi; \
+	cp -R "$$BIN/$(RESOURCE_BUNDLE)" $(CONTENTS)/Resources/
 	@echo "Bundled $(APP_BUNDLE)"
 
 sign: bundle
@@ -57,8 +67,10 @@ fixtures:
 logs:
 	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --style compact
 
+# Regenerates the committed language models. The only network access in the
+# project, and it only happens on a dev machine when Tools/data/ is cold.
 ngrams:
-	@echo "see Tools/build-ngrams.py (Task 4)"
+	uv run Tools/build-ngrams.py
 
 clean:
 	rm -rf .build build

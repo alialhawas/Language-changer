@@ -9,7 +9,8 @@ let package = Package(
     targets: [
         .target(
             name: "DodomaCore",
-            path: "Sources/DodomaCore"
+            path: "Sources/DodomaCore",
+            resources: [.copy("Resources")]
         ),
         .executableTarget(
             name: "Dodoma",
