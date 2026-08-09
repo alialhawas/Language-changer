@@ -234,6 +234,118 @@ final class UndoFlowTests: XCTestCase {
         XCTAssertTrue(harness.isEvaluationArmed)
     }
 
+    // MARK: - Input between the fix and the undo
+
+    /// The hole the serial stamp closes. `.bestEffort` proceeds on structural
+    /// silence, so without it: fix, type two characters, ⌘⌥Z — and the seven
+    /// backspaces eat both of those characters and five clusters of the
+    /// correction, in an application where nothing can detect that they did.
+    func testUndoIsRefusedAfterFurtherTypingWhenTheCaretCannotBeRead() {
+        applyAFix()
+        harness.type("a")
+        harness.type("b")
+        harness.oracle.answer(caret: .unreadable)
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 1, "nothing was deleted")
+        XCTAssertEqual(harness.rejectionCount, 1)
+    }
+
+    /// Same hole, reached the other way: an application in `axVerifySkip` is
+    /// not asked about its caret at all, so the serial is the only evidence
+    /// there is.
+    func testUndoIsRefusedAfterFurtherTypingWhenTheAppSkipsVerification() {
+        harness = PipelineHarness(axVerifySkip: [Fixtures.app])
+        harness.oracle.answer(caret: Fixtures.caretBeforeFix)
+        applyAFix()
+        XCTAssertEqual(
+            harness.oracle.requestedLengths, [nil], "precondition: the caret is never read here")
+
+        harness.type("a")
+        harness.undo()
+        XCTAssertEqual(harness.engine.applied.count, 1)
+        XCTAssertEqual(harness.rejectionCount, 1)
+    }
+
+    func testAnUnverifiedUndoStillWorksWhenNothingHasHappened() {
+        harness = PipelineHarness(axVerifySkip: [Fixtures.app])
+        harness.oracle.answer(caret: Fixtures.caretBeforeFix)
+        applyAFix()
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 2)
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+    }
+
+    /// A positive caret match is direct evidence about the screen and stands on
+    /// its own. Typing a character and deleting it again puts the correction
+    /// back where it was, and the user is entitled to their undo.
+    func testAMatchingCaretStillUndoesAfterTypingAndDeletingBack() {
+        applyAFix()
+        harness.type("a")
+        harness.type("", keycode: Keycode.delete)
+        // The screen is back to what it was, and the read says so.
+        harness.oracle.answer(caret: Fixtures.caretAfterFix)
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 2)
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+    }
+
+    /// The invalidation signals cannot help here: a click that lands mid-burst
+    /// arrives while the slot is still empty, so it invalidates nothing, and
+    /// the record is written afterwards regardless. The fix is that the record
+    /// is not written at all.
+    func testAClickDuringTheBurstLeavesNoUndoOffered() {
+        harness.engine.duringApply = { [weak harness] in
+            harness?.pipeline.handle(.mouseDown(at: .zero, primaryButton: true))
+        }
+        harness.offer(Fixtures.fix)
+        harness.send(.suggestionAccept)
+
+        XCTAssertEqual(harness.engine.applied.count, 1, "the fix itself happened")
+        XCTAssertEqual(harness.applied.count, 1, "and is still reported as the last fix")
+        XCTAssertNil(harness.pipeline.undoableFix(), "but there is nothing safe to undo")
+    }
+
+    /// A keystroke during the burst is the same problem: it reached the screen
+    /// and not the buffer, so it is sitting after the correction.
+    func testAKeystrokeDuringTheBurstLeavesNoUndoOffered() {
+        harness.engine.duringApply = { [weak harness] in
+            harness?.pipeline.handle(
+                .key(CapturedKey(
+                    keycode: 0, producedText: "z",
+                    timestamp: Date().timeIntervalSinceReferenceDate)))
+        }
+        harness.offer(Fixtures.fix)
+        harness.send(.suggestionAccept)
+
+        XCTAssertNil(harness.pipeline.undoableFix())
+    }
+
+    // MARK: - What the menu is told
+
+    func testCanUndoFollowsTheSlot() {
+        XCTAssertFalse(harness.pipeline.canUndo())
+        applyAFix()
+        XCTAssertTrue(harness.pipeline.canUndo())
+        harness.click()
+        XCTAssertFalse(harness.pipeline.canUndo())
+    }
+
+    /// An enabled menu item that answers with a ✕ is worse than a greyed-out
+    /// one.
+    func testCanUndoIsFalseWhileSuspended() {
+        applyAFix()
+        var paused = harness.settings.settings
+        paused.paused = true
+        harness.pipeline.apply(paused)
+        harness.drain()
+
+        XCTAssertNotNil(harness.pipeline.undoableFix(), "the fix is still recorded")
+        XCTAssertFalse(harness.pipeline.canUndo(), "but it would not be carried out")
+    }
+
     // MARK: - Interaction with the panel
 
     func testUndoTakesAVisibleSuggestionDownWithoutRememberingARefusal() {

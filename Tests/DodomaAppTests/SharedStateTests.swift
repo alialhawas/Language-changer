@@ -85,7 +85,8 @@ final class FixHistoryStoreTests: XCTestCase {
                 sourceLayoutID: "com.apple.keylayout.ABC", replacedText: "hgsghl ",
                 capsMode: .asTyped),
             appliedAt: now.addingTimeInterval(offset),
-            bundleID: bundleID)
+            bundleID: bundleID,
+            inputSerial: 3)
     }
 
     func testRecordThenRead() {

@@ -144,6 +144,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         flash(Self.rejectedFlash)
     }
 
+    /// Takes the chord off the menu item, for when the shortcut could not be
+    /// registered — another application already owns ⌘⌥Z. The item still
+    /// works; advertising a chord that does nothing would send the user
+    /// looking for a broken keyboard. Main thread only.
+    func clearUndoShortcut() {
+        undoItem.keyEquivalent = ""
+        undoItem.keyEquivalentModifierMask = []
+    }
+
     /// Main thread only.
     func showUndo() {
         flash(Self.undoFlash)

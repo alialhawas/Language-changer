@@ -109,4 +109,48 @@ public enum CaretVerification {
             return .downgrade(reason: "the caret could not be read")
         }
     }
+
+    /// The undo's caret rule: `.bestEffort`, plus the one condition undo alone
+    /// can impose.
+    ///
+    /// Undo is the only path with a fixed reference point in the past — the
+    /// moment the fix landed — and it needs one, because the two ways
+    /// `.bestEffort` proceeds without comparing anything are both wrong the
+    /// instant the user types another character:
+    ///
+    /// - `.unreadable`: the element exposes no text, so nothing was compared;
+    /// - `verified == false`: the application is in `axVerifySkip`, so nothing
+    ///   was even asked.
+    ///
+    /// In both, the inverse would post `deleteCount` backspaces counted back
+    /// from wherever the caret is *now*. Type "ab" after a seven-cluster
+    /// correction and that is two characters of the user's new text plus five
+    /// clusters of the correction, in precisely the applications where the
+    /// mistake cannot be detected and there is no second undo to recover with.
+    ///
+    /// So: a positive `.value` match stands on its own — it is direct evidence
+    /// about the screen, and a user who typed and then deleted back to where
+    /// they were is entitled to their undo. Everything else additionally
+    /// requires that nothing at all has happened since the fix landed.
+    ///
+    /// - Parameters:
+    ///   - verified: the caret was asked for. False for `axVerifySkip` apps.
+    ///   - inputSinceFix: the input serial has moved since the fix was applied.
+    public static func undoVerdict(
+        read: CaretRead, replacedText: String, verified: Bool, inputSinceFix: Bool
+    ) -> Verdict {
+        guard verified else {
+            return inputSinceFix
+                ? .downgrade(reason: "input arrived since the fix and this app is not verified")
+                : .proceed
+        }
+
+        let verdict = self.verdict(read: read, replacedText: replacedText, mode: .bestEffort)
+        guard verdict == .proceed else { return verdict }
+        // A match is evidence about the screen; nothing else here is.
+        if case .value = read { return .proceed }
+        return inputSinceFix
+            ? .downgrade(reason: "input arrived since the fix and the caret cannot be read")
+            : .proceed
+    }
 }

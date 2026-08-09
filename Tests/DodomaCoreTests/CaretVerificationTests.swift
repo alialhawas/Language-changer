@@ -133,6 +133,61 @@ final class CaretVerifyModeTableTests: XCTestCase {
         }
     }
 
+    // MARK: - Undo's extra condition
+
+    /// `.bestEffort` proceeds without comparing anything in two cases, and both
+    /// of them stop being true the moment the user types another character:
+    /// the correction is no longer the last thing in front of the caret, so the
+    /// inverse's backspaces would eat what came after it. In an application
+    /// where the caret cannot be read there is no second chance to notice.
+    func testUndoRequiresAnUnmovedSerialWhereverNothingWasCompared() {
+        let rows: [(read: CaretRead, verified: Bool, quiet: Bool, proceeds: Bool, note: String)] = [
+            (.value("please send hgsghl"), true, true, true, "a match, and nothing happened"),
+            (.value("please send hgsghl"), true, false, true,
+             "a match is direct evidence: typing and deleting back is still undoable"),
+            (.value("nope"), true, true, false, "a mismatch is a mismatch"),
+            (.unreadable, true, true, true, "silent, but nothing has happened since"),
+            (.unreadable, true, false, false, "silent AND the screen moved: the dangerous one"),
+            (.selectionPresent, true, true, false, "fail-closed either way"),
+            (.selectionPresent, true, false, false, "fail-closed either way"),
+            (.unavailable, true, true, false, "fail-closed either way"),
+            (.unavailable, true, false, false, "fail-closed either way"),
+            (.unavailable, false, true, true, "axVerifySkip: nothing asked, nothing happened"),
+            (.unavailable, false, false, false, "axVerifySkip AND the screen moved"),
+        ]
+
+        for row in rows {
+            let verdict = CaretVerification.undoVerdict(
+                read: row.read, replacedText: Self.replaced, verified: row.verified,
+                inputSinceFix: !row.quiet)
+            XCTAssertEqual(
+                verdict == .proceed, row.proceeds,
+                "\(row.read)/verified=\(row.verified)/quiet=\(row.quiet): \(row.note)")
+        }
+    }
+
+    /// Undo is never more permissive than an accepted suggestion would be.
+    func testUndoIsNeverLooserThanBestEffort() {
+        let reads: [CaretRead] = [
+            .value("please send hgsghl"), .value("nope"), .unreadable, .selectionPresent,
+            .unavailable,
+        ]
+        for read in reads where !proceeds(read, .bestEffort) {
+            for quiet in [true, false] {
+                let verdict = CaretVerification.undoVerdict(
+                    read: read, replacedText: Self.replaced, verified: true, inputSinceFix: !quiet)
+                XCTAssertNotEqual(verdict, .proceed, "\(read), quiet=\(quiet)")
+            }
+        }
+    }
+
+    func testUndoOfAnEmptyReplacementIsStillNothing() {
+        XCTAssertNotEqual(
+            CaretVerification.undoVerdict(
+                read: .value(""), replacedText: "", verified: true, inputSinceFix: false),
+            .proceed)
+    }
+
     /// The reasons reach the log and the debug window, and they are how a user
     /// finds out why nothing happened. Each cause has to say something
     /// different, or the log cannot tell them apart.

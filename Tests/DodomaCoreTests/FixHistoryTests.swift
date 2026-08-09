@@ -23,8 +23,10 @@ private enum Canonical {
         replacedText: typed,
         capsMode: .asTyped)
 
-    static func applied(at date: Date, in bundleID: String? = "com.apple.TextEdit") -> AppliedFix {
-        AppliedFix(fix: fix, appliedAt: date, bundleID: bundleID)
+    static func applied(
+        at date: Date, in bundleID: String? = "com.apple.TextEdit", serial: UInt64 = 7
+    ) -> AppliedFix {
+        AppliedFix(fix: fix, appliedAt: date, bundleID: bundleID, inputSerial: serial)
     }
 }
 
@@ -129,6 +131,17 @@ final class FixHistoryTests: XCTestCase {
         XCTAssertNil(history.undoableFix(now: now.addingTimeInterval(30.1)))
     }
 
+    /// A fix stamped in the future is what a clock correction or a wake from
+    /// sleep looks like. The window is a safety limit, so the direction to fail
+    /// in when the clock is not trustworthy is closed, not wide open.
+    func testAFixStampedInTheFutureIsNotUndoable() {
+        let history = historyWithAFix(at: 60)
+        XCTAssertNil(history.undoableFix(now: now))
+        XCTAssertFalse(
+            FixHistory.isWithinWindow(appliedAt: now.addingTimeInterval(0.001), now: now))
+        XCTAssertTrue(FixHistory.isWithinWindow(appliedAt: now, now: now), "zero is inside")
+    }
+
     /// Expiry hides the fix; it does not erase the record, so a clock that
     /// jumps backwards cannot be told apart from one that never moved.
     func testExpiryIsAViewNotAMutation() {
@@ -226,7 +239,8 @@ final class FixHistoryTests: XCTestCase {
                 deleteCount: 3, insertText: "ودك", targetLayoutID: Canonical.arabic,
                 sourceLayoutID: Canonical.english, replacedText: "l,;", capsMode: .asTyped),
             appliedAt: now.addingTimeInterval(5),
-            bundleID: "com.apple.TextEdit")
+            bundleID: "com.apple.TextEdit",
+            inputSerial: 9)
         history.record(second)
 
         XCTAssertEqual(history.undoableFix(now: now.addingTimeInterval(5))?.fix, second.fix)

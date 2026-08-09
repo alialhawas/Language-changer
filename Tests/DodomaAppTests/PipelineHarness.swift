@@ -27,6 +27,11 @@ final class FakeFixEngine: FixApplying {
     var result: Result<FixProgress, FixFailure> = .success(
         FixProgress(deletedClusters: 1, insertedUTF16Units: 1))
 
+    /// Run on the pipeline queue while the apply is notionally in flight — i.e.
+    /// with `isApplying` set. The only way to reproduce a click or a keystroke
+    /// landing in the middle of a delete burst.
+    var duringApply: (() -> Void)?
+
     var applied: [Call] {
         lock.lock()
         defer { lock.unlock() }
@@ -45,6 +50,7 @@ final class FakeFixEngine: FixApplying {
         calls.append(Call(fix: fix, bundleID: bundleID, staleWhenAsked: isStale()))
         let result = self.result
         lock.unlock()
+        duringApply?()
         completion(result)
     }
 }
@@ -148,9 +154,18 @@ final class PipelineHarness {
     private var undoCount = 0
     private var hides = 0
 
-    init(bundleID: String? = Fixtures.app) {
+    /// - Parameter axVerifySkip: seeded into the settings blob before the store
+    ///   reads it, because there is no setter for it — it is a hand-edited
+    ///   preference by design.
+    init(bundleID: String? = Fixtures.app, axVerifySkip: Set<String> = []) {
         suiteName = "com.ali.dodoma.tests.\(UUID().uuidString)"
-        settings = SettingsStore(defaults: UserDefaults(suiteName: suiteName)!)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        if !axVerifySkip.isEmpty {
+            var seeded = AppSettings.defaults
+            seeded.axVerifySkip = axVerifySkip
+            defaults.set(try! JSONEncoder().encode(seeded), forKey: SettingsStore.Key.settings)
+        }
+        settings = SettingsStore(defaults: defaults)
         pipeline = TypingPipeline(
             settings: settings,
             frontmost: frontmost,

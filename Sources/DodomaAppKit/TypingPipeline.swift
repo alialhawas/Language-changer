@@ -832,6 +832,19 @@ final class TypingPipeline {
         history.undoableFix(now: now)
     }
 
+    /// Whether an undo asked for right now would actually be attempted.
+    ///
+    /// The menu needs this rather than `undoableFix` alone: an item that is
+    /// enabled and then answers with a ✕ is worse than one that is greyed out.
+    /// The suspension flags are queue-confined, so the answer is taken on the
+    /// queue — three boolean reads, and only once there is something to undo,
+    /// so the common case does not hop at all. Safe from the main thread: no
+    /// work on this queue ever waits on the main one.
+    func canUndo(now: Date = Date()) -> Bool {
+        guard history.undoableFix(now: now) != nil else { return false }
+        return queue.sync { captureActive && !isSuppressed && !isApplying && !isGating }
+    }
+
     /// Takes back the last fix. Callable from any thread — the hot key and the
     /// menu item both arrive on the main one.
     func undoLastFix() {
@@ -906,11 +919,17 @@ final class TypingPipeline {
             return
         }
 
-        let verification =
-            verified
-            ? CaretVerification.verdict(
-                read: focus.caretRead, replacedText: inverse.replacedText, mode: .bestEffort)
-            : .proceed
+        // `.bestEffort`, plus undo's own condition: the two ways best effort
+        // proceeds without comparing anything — an element that exposes no
+        // text, an application in `axVerifySkip` — are only safe while nothing
+        // has happened since the fix landed. `serial` above is taken when the
+        // undo was *asked for*, which says nothing about the minute before
+        // that; `applied.inputSerial` is the one with the fix as its origin.
+        let verification = CaretVerification.undoVerdict(
+            read: focus.caretRead,
+            replacedText: inverse.replacedText,
+            verified: verified,
+            inputSinceFix: inputs.hasMoved(since: applied.inputSerial))
 
         switch SafetyGate.resolve(
             decision: .autoApply(inverse), secureField: focus.security, verification: verification)
@@ -985,13 +1004,15 @@ final class TypingPipeline {
         ) { [weak self] result in
             guard let self else { return }
             self.queue.async {
-                self.finishApply(fix, bundleID: bundleID, kind: kind, result: result)
+                self.finishApply(
+                    fix, bundleID: bundleID, kind: kind, verifiedAt: verifiedAt, result: result)
             }
         }
     }
 
     private func finishApply(
-        _ fix: Fix, bundleID: String?, kind: ApplyKind, result: Result<FixProgress, FixFailure>
+        _ fix: Fix, bundleID: String?, kind: ApplyKind, verifiedAt: UInt64,
+        result: Result<FixProgress, FixFailure>
     ) {
         dispatchPrecondition(condition: .onQueue(queue))
 
@@ -1002,8 +1023,20 @@ final class TypingPipeline {
             progress = succeeded
             switch kind {
             case .auto, .accepted:
-                let applied = AppliedFix(fix: fix, appliedAt: Date(), bundleID: bundleID)
-                history.record(applied)
+                let applied = AppliedFix(
+                    fix: fix, appliedAt: Date(), bundleID: bundleID, inputSerial: verifiedAt)
+                if droppedInputDuringApply {
+                    // Real input reached the screen while the burst was
+                    // running — it was dropped here, not there — so what is in
+                    // front of the caret is the correction followed by
+                    // something this app never saw. An undo counts its
+                    // backspaces from the caret, so it would eat that
+                    // something first. No offer at all is the honest answer;
+                    // the fix itself still happened and is still reported.
+                    Log.fix.info("no undo offered: input arrived while the fix was being applied")
+                } else {
+                    history.record(applied)
+                }
                 lastDecision?.result = "applied"
                 onAutoApply?(applied)
             case .undo(let original):

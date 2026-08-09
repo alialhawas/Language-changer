@@ -83,7 +83,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             pipeline?.undoLastFix()
         }
         controller.isUndoAvailable = { [weak pipeline] in
-            pipeline?.undoableFix() != nil
+            // Not just "is there one": an item that is enabled and then
+            // answers with a ✕ because the app is paused is worse than a
+            // greyed-out one.
+            pipeline?.canUndo() ?? false
         }
 
         // Carbon, not the event tap: the shortcut has to work in exactly the
@@ -100,6 +103,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         hotkeys.register()
+        if !hotkeys.registeredActions.contains(.undoLastFix) {
+            controller.clearUndoShortcut()
+        }
 
         // Both halves of the safety layer feed the pipeline the same way: a
         // flag it caches on its own queue, plus a buffer drop on the way up.

@@ -49,7 +49,11 @@ public struct FixHistory: Equatable, Sendable {
     public enum Invalidation: String, Equatable, Sendable, CaseIterable {
         /// The frontmost application is no longer the one the fix landed in.
         case appChanged
-        /// A focus change inside the same application.
+        /// A focus change inside the same application. No signal emits this
+        /// yet: the app has no focused-element observer, so a move between two
+        /// fields of one window is invisible to it. The case is here because
+        /// the `FocusMonitor` the plan defers is the thing that will emit it,
+        /// and the caret verification is what covers the gap until then.
         case focusChanged
         /// The user moved on: a click, or a committed line.
         case userMovedOn
@@ -75,8 +79,13 @@ public struct FixHistory: Equatable, Sendable {
         slot = applied
     }
 
+    /// Gives up the slot. Returns whether there was anything to give up.
+    ///
+    /// The reason is not stored. It names the call site for the reader, and
+    /// the app layer logs it; keeping it here would be a field nothing reads.
+    /// Hence the unnamed parameter.
     @discardableResult
-    public mutating func invalidate(_ reason: Invalidation) -> Bool {
+    public mutating func invalidate(_: Invalidation) -> Bool {
         guard slot != nil else { return false }
         slot = nil
         return true
@@ -118,8 +127,13 @@ public struct FixHistory: Equatable, Sendable {
 
     /// Inclusive at the boundary: a fix applied exactly `undoWindow` ago is
     /// still undoable. Anything else would make the constant a lie by one tick.
+    ///
+    /// A negative interval — a fix stamped in the future, which is what a
+    /// clock correction or a wake from sleep looks like — is out of the window
+    /// rather than comfortably inside it. The window is a safety limit, and
+    /// the direction to fail in when the clock is not trustworthy is closed.
     public static func isWithinWindow(appliedAt: Date, now: Date) -> Bool {
-        now.timeIntervalSince(appliedAt) <= undoWindow
+        (0...undoWindow).contains(now.timeIntervalSince(appliedAt))
     }
 
     /// Whether an input means the user has moved on from the text a fix

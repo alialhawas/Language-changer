@@ -24,6 +24,10 @@ final class HotkeyCenter {
     var onAction: ((HotkeyAction) -> Void)?
 
     private var registered: [EventHotKeyRef] = []
+    /// The actions that actually got their chord. Anything missing here is a
+    /// chord another application already owns, and nothing in the interface
+    /// may advertise it.
+    private(set) var registeredActions: Set<HotkeyAction> = []
     private var handler: EventHandlerRef?
     /// Index into `HotkeyAction.allCases`, which is what the hot key id carries.
     private let actions = HotkeyAction.allCases
@@ -69,6 +73,7 @@ final class HotkeyCenter {
                 GetApplicationEventTarget(), 0, &ref)
             if result == noErr, let ref {
                 registered.append(ref)
+                registeredActions.insert(binding.action)
             } else {
                 // Almost always because another application already owns the
                 // chord. Nothing to do about it here, and the rest still works.
@@ -88,6 +93,7 @@ final class HotkeyCenter {
             UnregisterEventHotKey(ref)
         }
         registered.removeAll()
+        registeredActions.removeAll()
         if let handler {
             RemoveEventHandler(handler)
             self.handler = nil
