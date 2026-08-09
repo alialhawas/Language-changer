@@ -84,15 +84,11 @@ enum CLI {
     // MARK: - Scoring
 
     private static func score(_ text: String) -> Int32 {
+        if let message = preloadModels() { return fail("--score: \(message)", code: 1) }
         print("text: \(text)")
         print("lang   bigram  dict    combined")
         for language in Language.allCases {
             let model = LanguageModel.shared(language)
-            do {
-                try model.preload()
-            } catch {
-                return fail("--score: \(error)", code: 1)
-            }
             let score = model.combined(text)
             print(
                 String(
@@ -107,6 +103,7 @@ enum CLI {
     private static func decide(_ text: String, language: String?, aggressiveness: String?)
         -> Int32
     {
+        if let message = preloadModels() { return fail("--decide: \(message)", code: 1) }
         guard let detector = liveDetector() else {
             return fail(
                 "--decide: this machine needs both an English and an Arabic keyboard layout "
@@ -193,6 +190,7 @@ enum CLI {
     // MARK: - Eval
 
     private static func eval(_ path: String, aggressiveness: String?) -> Int32 {
+        if let message = preloadModels() { return fail("--eval: \(message)", code: 1) }
         guard let detector = liveDetector() else {
             return fail(
                 "--eval: this machine needs both an English and an Arabic keyboard layout enabled",
@@ -218,10 +216,24 @@ enum CLI {
 
         let report = EvalHarness.run(rows: rows, detector: detector, aggressiveness: level)
         print(report.render())
-        return report.falsePositives.isEmpty ? 0 : 1
+        return report.exitCode
     }
 
     // MARK: - Shared helpers
+
+    /// Forces both language models in so a missing or malformed resource
+    /// exits with a message instead of quietly scoring everything as zero.
+    /// Returns a description of the failure, or nil on success.
+    private static func preloadModels() -> String? {
+        for language in Language.allCases {
+            do {
+                try LanguageModel.shared(language).preload()
+            } catch {
+                return "\(error)"
+            }
+        }
+        return nil
+    }
 
     private static func parseAggressiveness(_ raw: String?) -> Aggressiveness? {
         guard let raw else { return .balanced }

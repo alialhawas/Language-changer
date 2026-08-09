@@ -13,11 +13,18 @@ public struct LanguageModelPair: Sendable {
 
 /// The trailing slice of the buffer that is a candidate for rewriting.
 public struct CandidateRegion: Equatable, Sendable {
-    /// Contiguous keys, first key of the first bad token through the last
-    /// non-whitespace key. Trailing whitespace is excluded so the fix does not
-    /// have to reinsert it.
+    /// Contiguous keys, from the first key of the first bad token through the
+    /// END OF THE BUFFER — trailing whitespace included.
+    ///
+    /// The region has to run to the caret, because a fix deletes backwards
+    /// from it. Stopping at the last letter would leave the trailing space
+    /// between the caret and the text being replaced, and deleting
+    /// `typedText.count` clusters would then eat one letter too many and
+    /// strand the space. The space is cheap to carry: it renders to itself
+    /// under either layout, so it reappears unchanged in `insertText`.
     public let keys: [CapturedKey]
-    /// What is actually on screen for those keys.
+    /// What is actually on screen for those keys, trailing whitespace included.
+    /// Exactly the text a fix replaces.
     public let typedText: String
     /// Letters only: punctuation and spaces do not count towards length gates.
     public let letterCount: Int
@@ -85,8 +92,9 @@ public enum Segmenter {
 
         guard let firstAccepted else { return nil }
         let start = tokens[firstAccepted].range.lowerBound
-        let end = tokens[tokens.count - 1].range.upperBound
-        let regionKeys = Array(keys[start..<end])
+        // Through the end of the buffer, not the end of the last token: the
+        // region must reach the caret. See `CandidateRegion.keys`.
+        let regionKeys = Array(keys[start...])
         let typedText = onScreenText(of: regionKeys, layout: currentLayout)
 
         return CandidateRegion(

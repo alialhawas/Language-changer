@@ -37,6 +37,53 @@ final class EvalTests: XCTestCase {
             report.failures.count, 0, "corpus regressions:\n" + report.render())
     }
 
+    /// The canary has to be shown firing, not just shown clean: a corpus row
+    /// labelled `ignore` whose text is the canonical auto-fix is exactly the
+    /// regression the check exists to catch.
+    func testFalsePositiveCanaryFiresOnAMislabelledRow() throws {
+        let fixture = try DetectorFixture.make()
+        let rows = try EvalHarness.parse(
+            """
+            HC MV; HKH HSMDIH HGDML\tignore
+            please send me the report\tignore
+            """)
+        let report = EvalHarness.run(
+            rows: rows, detector: fixture.detector, keyboardType: fixture.keyboardType)
+
+        XCTAssertEqual(report.falsePositives.count, 1)
+        let caught = try XCTUnwrap(report.falsePositives.first)
+        XCTAssertEqual(caught.row.text, "HC MV; HKH HSMDIH HGDML")
+        XCTAssertEqual(caught.predicted, .autoArabic)
+        XCTAssertTrue(caught.isFalsePositive)
+
+        XCTAssertTrue(
+            report.render().contains("false-positive canary: FAILED, 1 ignore row(s) auto-applied"),
+            report.render())
+        XCTAssertEqual(report.exitCode, 1, "--eval must fail the build on a false positive")
+    }
+
+    func testCleanCorpusExitsZero() throws {
+        let fixture = try DetectorFixture.make()
+        let report = EvalHarness.run(
+            rows: try loadCorpus(), detector: fixture.detector,
+            keyboardType: fixture.keyboardType)
+        XCTAssertEqual(report.exitCode, 0)
+    }
+
+    /// A suggestion on an `ignore` row is a miss, not a false positive: the
+    /// canary only fires on silent rewrites.
+    func testSuggestionOnAnIgnoreRowIsNotAFalsePositive() throws {
+        let fixture = try DetectorFixture.make()
+        let rows = try EvalHarness.parse("sghl\tignore")
+        let report = EvalHarness.run(
+            rows: rows, detector: fixture.detector, keyboardType: fixture.keyboardType)
+
+        XCTAssertEqual(report.outcomes.first?.predicted, .suggest)
+        XCTAssertEqual(report.failures.count, 1)
+        XCTAssertTrue(report.falsePositives.isEmpty)
+        XCTAssertEqual(report.exitCode, 0)
+    }
+
     // MARK: - Parsing
 
     func testParseSkipsCommentsAndBlankLines() throws {

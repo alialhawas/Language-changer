@@ -37,13 +37,47 @@ final class SegmenterTests: XCTestCase {
         }
     }
 
-    func testTrailingSpaceIsExcludedFromTheRegion() throws {
+    /// The region has to reach the caret. `deleteCount` counts clusters
+    /// immediately behind it, so a region that stopped at the last letter
+    /// would delete one letter too many and strand the space:
+    /// "hgsghl " − 6 = "h", + "السلام" = "hالسلام".
+    func testTrailingSpaceIsPartOfTheRegion() throws {
         let fixture = try DetectorFixture.make()
         let keys = try fixture.latinKeys("check this HSMDIH ")
         let region = try XCTUnwrap(fixture.segment(keys))
 
-        XCTAssertEqual(region.typedText, "HSMDIH")
+        XCTAssertEqual(region.typedText, "HSMDIH ")
+        XCTAssertEqual(region.letterCount, 6, "the space is not a letter")
+        XCTAssertEqual(region.tokenCount, 1, "the space does not open a token")
         XCTAssertEqual(region.completedTokenCount, 1, "the word was finished with a space")
+    }
+
+    func testApplyingTheFixLeavesTheCorrectText() throws {
+        let fixture = try DetectorFixture.make()
+        let cases: [(typed: String, expected: String)] = [
+            ("hgsghl ", "السلام "),
+            ("check this lvnsi ", "check this مدرسه "),
+            ("check this lvnsi  ", "check this مدرسه  "),
+            ("HC MV; HKH HSMDIH HGDML", "اذ ودك انا اسويها اليوم"),
+            ("HC MV; HKH HSMDIH HGDML ", "اذ ودك انا اسويها اليوم "),
+        ]
+        for row in cases {
+            let detection = try XCTUnwrap(fixture.detect(row.typed), row.typed)
+            let fix = try XCTUnwrap(detection.decision.fix, row.typed)
+            XCTAssertEqual(fix.deleteCount, fix.replacedText.count, row.typed)
+
+            var text = row.typed
+            text.removeLast(fix.deleteCount)
+            text += fix.insertText
+            XCTAssertEqual(text, row.expected, "applying the fix to \(row.typed)")
+        }
+    }
+
+    func testMultipleTrailingSpacesAreAllCarried() throws {
+        let fixture = try DetectorFixture.make()
+        let region = try XCTUnwrap(fixture.segment(try fixture.latinKeys("hgsghl   ")))
+        XCTAssertEqual(region.typedText, "hgsghl   ")
+        XCTAssertEqual(region.letterCount, 6)
     }
 
     func testEmptyAndWhitespaceOnlyBuffersHaveNoCandidate() throws {

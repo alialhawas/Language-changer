@@ -43,6 +43,10 @@ public struct EvalReport: Sendable {
     public var falsePositives: [EvalOutcome] { outcomes.filter(\.isFalsePositive) }
     public var correctCount: Int { outcomes.filter(\.isCorrect).count }
 
+    /// What `--eval` returns to the shell: non-zero when a row labelled
+    /// `ignore` was rewritten without asking.
+    public var exitCode: Int32 { falsePositives.isEmpty ? 0 : 1 }
+
     /// Rows labelled `auto_ar`/`auto_en` that were predicted correctly.
     public var autoAccuracy: Double {
         let autoRows = outcomes.filter {

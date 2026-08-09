@@ -21,8 +21,8 @@ bundle: build
 	cp Resources/Info.plist $(CONTENTS)/Info.plist
 	@find Resources -mindepth 1 -maxdepth 1 ! -name Info.plist -exec cp -R {} $(CONTENTS)/Resources/ \;
 	@# SPM emits DodomaCore's word lists and bigram tables as a separate bundle.
-	@# Bundle.module looks for it next to the executable and in the app's
-	@# Resources, so it has to be copied in or scoring silently reads nothing.
+	@# CoreResources.swift searches Contents/Resources for it at runtime, so it
+	@# has to be copied in or the app cannot score anything.
 	@BIN="$$(swift build -c release --show-bin-path)"; \
 	if [ ! -d "$$BIN/$(RESOURCE_BUNDLE)" ]; then \
 		echo "error: $(RESOURCE_BUNDLE) not found in $$BIN"; exit 1; \

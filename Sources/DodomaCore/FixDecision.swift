@@ -64,8 +64,22 @@ public struct Thresholds: Equatable, Sendable {
         autoAlt: 0.56, autoCur: 0.34, autoGap: 0.34, suggestGap: 0.12, suggestAlt: 0.45)
 }
 
-/// A concrete edit: delete `deleteCount` grapheme clusters behind the caret and
-/// type `insertText`.
+/// A concrete edit, expressed relative to the caret.
+///
+/// The contract the applier (M4) may rely on, exactly:
+///
+/// 1. `deleteCount` is the number of grapheme clusters IMMEDIATELY BEHIND THE
+///    CARET, with nothing in between. There is no offset to add: the region
+///    always runs to the end of the buffer, so any whitespace the user typed
+///    after the misspelt word is part of `replacedText` and counted here.
+/// 2. Deleting exactly `deleteCount` clusters removes exactly `replacedText`;
+///    `deleteCount == replacedText.count`.
+/// 3. Typing `insertText` afterwards leaves the caret where it started, in the
+///    sense that any trailing whitespace in `replacedText` reappears at the end
+///    of `insertText` — a space renders to a space under either layout, so the
+///    user can keep typing the next word without retyping the separator.
+///
+/// So the whole operation is: `text.removeLast(deleteCount); text += insertText`.
 public struct Fix: Equatable, Sendable {
     public let deleteCount: Int
     public let insertText: String
@@ -209,7 +223,9 @@ public enum FixDecision {
 
     // MARK: - Gates
 
-    private static func verdict(
+    /// The gate ladder, isolated from scoring so it can be table-driven with
+    /// synthetic `Score` values at the threshold boundaries.
+    static func verdict(
         region: CandidateRegion,
         current: Score,
         alternate: Score,
