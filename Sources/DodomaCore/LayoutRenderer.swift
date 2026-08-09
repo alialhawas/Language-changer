@@ -37,6 +37,18 @@ public struct RenderedKey: Equatable, Sendable {
     }
 }
 
+/// A whole sequence rendered through one layout.
+public struct RenderedSequence: Equatable, Sendable {
+    public let text: String
+    /// Fraction of keys the layout cannot produce anything for.
+    public let emptyRate: Double
+
+    public init(text: String, emptyRate: Double) {
+        self.text = text
+        self.emptyRate = emptyRate
+    }
+}
+
 /// Renders captured keycode sequences through an arbitrary keyboard layout.
 public struct LayoutRenderer {
     /// The text `keys` would have produced had they been typed under `layout`.
@@ -57,6 +69,26 @@ public struct LayoutRenderer {
             if key.isUnproducible { count += 1 }
         }
         return Double(unproducible) / Double(rendered.count)
+    }
+
+    /// Text and unproducible-key rate from a single translation pass.
+    ///
+    /// The detection layer needs both for every candidate rendering, and each
+    /// of `render` and `emptyRate` runs the whole sequence through
+    /// `UCKeyTranslate`; this pays for it once.
+    public static func renderSequence(
+        _ keys: [CapturedKey], layout: KeyboardLayout, capsMode: CapsMode
+    ) -> RenderedSequence {
+        let rendered = renderKeys(keys, layout: layout, capsMode: capsMode)
+        guard !rendered.isEmpty else { return RenderedSequence(text: "", emptyRate: 0) }
+        var unproducible = 0
+        var text = ""
+        for key in rendered {
+            text += key.text
+            if key.isUnproducible { unproducible += 1 }
+        }
+        return RenderedSequence(
+            text: text, emptyRate: Double(unproducible) / Double(rendered.count))
     }
 
     /// One translation per input key; entries may be empty or multi-character.
