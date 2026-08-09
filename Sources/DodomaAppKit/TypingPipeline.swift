@@ -499,11 +499,13 @@ final class TypingPipeline {
             policy = allowed
         }
 
-        guard let pair = layoutEngine.currentPair() else {
-            publish(
-                .skipped(
-                    reason: "no English/Arabic layout pair enabled", policy: policy,
-                    bundleID: bundleID, evaluatedAt: now))
+        // `cachedPair()`, not `currentPair()`: this runs on the pipeline queue,
+        // and enumerating input sources is a Text Input Sources call that
+        // belongs on the main thread. A cold cache means an enabled-sources
+        // change just invalidated it; `warmLayoutCache()` always repopulates on
+        // the main thread after an invalidation, so the next quiet period will
+        // have a warm cache. Skip this one rather than enumerate off-main.
+        guard let pair = layoutEngine.cachedPair() else {
             return
         }
 
@@ -660,6 +662,14 @@ final class TypingPipeline {
 
         case .autoApply:
             guard let fix = decision.fix else { break }
+            // The accept and undo paths both re-check this before they delete;
+            // the auto path must too. The gate took ~250ms, and a grant revoked
+            // inside that window — the tap stopped, a pause, the app set to
+            // Off — must not reach `beginApply`.
+            guard captureActive, !isSuppressed else {
+                Log.fix.info("auto-apply refused: the pipeline is suspended")
+                break
+            }
             beginApply(fix, bundleID: bundleID, verifiedAt: serial, kind: .auto)
 
         case .nothing:
@@ -1161,6 +1171,23 @@ final class TypingPipeline {
     func offerNow(_ fix: Fix, bundleID: String?) {
         dispatchPrecondition(condition: .onQueue(queue))
         offerSuggestion(fix, bundleID: bundleID, serial: inputs.current)
+    }
+
+    /// Drives `fix` through the accessibility gate as an auto-apply, as though
+    /// the detector had just returned `.autoApply`. Queue-confined.
+    ///
+    /// The counterpart to `offerNow` for the automatic path. Like `offerNow`,
+    /// it exists because the tests cannot reach this through the detector — that
+    /// needs a particular pair of input sources enabled on whichever machine
+    /// runs them — and what is under test is the gate-to-apply-to-aftermath
+    /// wiring, not the detection.
+    func autoApplyNow(_ fix: Fix, bundleID: String?) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let snapshot = DecisionSnapshot(
+            verdict: "autoApply", policy: frontmostPolicy.rawValue, bundleID: bundleID,
+            deleteCount: fix.deleteCount, insertText: fix.insertText, evaluatedAt: Self.now())
+        beginGate(
+            for: .autoApply(fix), snapshot: snapshot, policy: frontmostPolicy, bundleID: bundleID)
     }
 
     /// Whether an evaluation is scheduled. Queue-confined. The three abandon

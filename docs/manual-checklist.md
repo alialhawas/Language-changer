@@ -39,7 +39,7 @@ which must become `اذ ودك انا اسويها اليوم`.
 | # | Do | Expect | ★ |
 | --- | --- | --- | --- |
 | 1 | Run `scripts/make-cert.sh` once, then `make install` (T2.0, T5.1) | A `Dodoma Dev` identity exists; Dodoma appears in the menu bar with no Dock icon. Without the stable identity every rebuild invalidates both grants and the rest of this run is worthless | |
-| 2 | First launch on a machine with no grants (M8) | The onboarding window opens **and Dodoma comes to the front** — the only time it is allowed to. It explains the destructive path and names ⌘⌥Z | |
+| 2 | First launch on a machine with no grants (M8) | The onboarding window opens **and Dodoma comes to the front** — the only time it is allowed to. It explains the destructive path and names ⌥⌘Z | |
 | 3 | In the onboarding window, use each **Grant…** button (M8) | The correct System Settings pane opens. As each grant is given, the row's circle becomes a green checkmark within two seconds, without touching the window | |
 | 4 | Press **Done**, then relaunch Dodoma (M8) | The onboarding window does not reappear. Menu → **Onboarding…** brings it back on demand | |
 | 5 | Open the menu-bar item (T2.2, T5.2) | The first line reads **Active (capturing)**, and `make logs` shows `[com.ali.dodoma:tap] event tap started` | |

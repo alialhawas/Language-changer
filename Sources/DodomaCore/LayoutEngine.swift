@@ -31,9 +31,32 @@ public final class LayoutEngine: @unchecked Sendable {
     }
 
     /// The English/Arabic pair Dodoma arbitrates between, or `nil` when the
-    /// user has not enabled one of them.
+    /// user has not enabled one of them. Warms the cache when cold.
     public func currentPair() -> (english: KeyboardLayout, arabic: KeyboardLayout)? {
-        let all = layouts()
+        Self.pair(in: layouts())
+    }
+
+    /// The English/Arabic pair from the cache *only when it is warm*.
+    ///
+    /// Returns `nil` when the cache is cold and never calls
+    /// `TISCreateInputSourceList`, so it is safe to call off the main thread —
+    /// unlike `currentPair()`, which repopulates. A caller on a background
+    /// queue that gets `nil` should skip rather than force an off-main
+    /// enumeration: `invalidate()` is always followed by a main-thread
+    /// `warmLayoutCache()`, so the cache is warm again by the next quiet period.
+    /// (Also `nil` when the cache is warm but no English/Arabic pair is
+    /// enabled; a cold cache is the only case that would otherwise enumerate.)
+    public func cachedPair() -> (english: KeyboardLayout, arabic: KeyboardLayout)? {
+        lock.lock()
+        let cached = cachedLayouts
+        lock.unlock()
+        guard let cached else { return nil }
+        return Self.pair(in: cached)
+    }
+
+    private static func pair(in all: [KeyboardLayout])
+        -> (english: KeyboardLayout, arabic: KeyboardLayout)?
+    {
         guard
             let english = all.first(where: { $0.languageCode.hasPrefix("en") }),
             let arabic = all.first(where: { $0.languageCode.hasPrefix("ar") })

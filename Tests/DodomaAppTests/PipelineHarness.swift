@@ -225,6 +225,13 @@ final class PipelineHarness {
         drain()
     }
 
+    /// Drives `fix` through the gate as an auto-apply, the way the detector
+    /// would when it returns `.autoApply`.
+    func autoApply(_ fix: Fix, in bundleID: String? = Fixtures.app) {
+        pipeline.queue.sync { pipeline.autoApplyNow(fix, bundleID: bundleID) }
+        drain()
+    }
+
     func send(_ event: TapEvent) {
         pipeline.queue.sync { pipeline.handle(event) }
         drain()
