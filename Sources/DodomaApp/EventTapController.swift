@@ -23,20 +23,33 @@ final class EventTapController {
     private static let watchdogWindow: TimeInterval = 60
     private static let watchdogThreshold = 2
 
+    /// How long `stop()` waits for the tap thread to leave its run loop.
+    private static let threadExitTimeout: DispatchTimeInterval = .seconds(2)
+
     private let queue: DispatchQueue
     private let handler: (TapEvent) -> Void
 
+    /// `tap`, `runLoopSource`, `runLoop`, `thread` and `running` are shared
+    /// between the main thread (start/stop) and the tap thread (run loop body
+    /// and callbacks) and are only ever touched while holding `stateLock`.
+    private let stateLock = NSLock()
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var thread: Thread?
-
-    private let runLoopLock = NSLock()
     private var runLoop: CFRunLoop?
+    private var thread: Thread?
+    private var running = false
+
+    /// Signalled by the tap thread when it leaves `runTapLoop`.
+    private var threadExited = DispatchSemaphore(value: 0)
 
     /// Touched only from the tap thread.
     private var disableTimestamps: [TimeInterval] = []
 
-    private(set) var isRunning = false
+    var isRunning: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return running
+    }
 
     /// - Parameters:
     ///   - queue: serial queue the captured events are delivered on.
@@ -47,7 +60,11 @@ final class EventTapController {
     }
 
     deinit {
-        tearDown()
+        // While `runTapLoop` is executing it holds a strong reference to self,
+        // so deinit can only be reached once the tap thread has exited. `stop()`
+        // is still called here so a controller that is dropped without an
+        // explicit stop cannot leak the mach port, and it is idempotent.
+        stop()
     }
 
     /// Creates and starts the tap. Returns false when the tap cannot be created,
@@ -80,69 +97,105 @@ final class EventTapController {
             return false
         }
 
-        tap = port
-        runLoopSource = source
-        isRunning = true
-
         let thread = Thread { [weak self] in
             self?.runTapLoop()
         }
         thread.name = "com.ali.dodoma.eventtap"
         thread.qualityOfService = .userInteractive
+
+        stateLock.lock()
+        tap = port
+        runLoopSource = source
         self.thread = thread
+        threadExited = DispatchSemaphore(value: 0)
+        running = true
+        stateLock.unlock()
+
         thread.start()
 
         Log.tap.info("event tap started")
         return true
     }
 
+    /// Idempotent and safe to call from any thread. Returns only once the tap
+    /// thread has left its run loop, so no callback can still be in flight when
+    /// the mach port is invalidated.
     func stop() {
-        guard isRunning else { return }
-        isRunning = false
-
-        runLoopLock.lock()
+        stateLock.lock()
+        guard running else {
+            stateLock.unlock()
+            return
+        }
+        running = false
+        let port = tap
+        let source = runLoopSource
         let loop = runLoop
+        let exited = threadExited
+        tap = nil
+        runLoopSource = nil
         runLoop = nil
-        runLoopLock.unlock()
+        stateLock.unlock()
 
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
+        if let port {
+            CGEvent.tapEnable(tap: port, enable: false)
         }
+
         if let loop {
+            // The thread is inside (or about to enter) CFRunLoopRun. Wake it and
+            // wait, so that no callback can be running when the port dies below.
             CFRunLoopStop(loop)
+            if exited.wait(timeout: .now() + Self.threadExitTimeout) == .timedOut {
+                Log.tap.error("tap thread did not exit before the teardown timeout")
+            }
+        }
+        // If `loop` was nil the thread has not yet entered its critical section;
+        // because `tap` was cleared under the same lock it will find nothing to
+        // do and return immediately, so there is nothing to wait for.
+
+        if let source {
+            CFRunLoopSourceInvalidate(source)
+        }
+        if let port {
+            CFMachPortInvalidate(port)
         }
 
-        tearDown()
+        stateLock.lock()
         thread = nil
+        stateLock.unlock()
+
         Log.tap.info("event tap stopped")
     }
 
-    private func tearDown() {
-        if let source = runLoopSource {
-            CFRunLoopSourceInvalidate(source)
-            runLoopSource = nil
-        }
-        if let tap {
-            CFMachPortInvalidate(tap)
-            self.tap = nil
-        }
-    }
-
-    /// Body of the dedicated tap thread.
+    /// Body of the dedicated tap thread. Holds a strong reference to the
+    /// controller for its whole duration, which is what keeps the unretained
+    /// `userInfo` pointer handed to `tapCreate` valid.
     private func runTapLoop() {
-        guard let source = runLoopSource, let tap else { return }
-
-        let loop = CFRunLoopGetCurrent()
-        runLoopLock.lock()
+        stateLock.lock()
+        let source = runLoopSource
+        let port = tap
+        let exited = threadExited
+        let loop: CFRunLoop? = (source != nil && port != nil) ? CFRunLoopGetCurrent() : nil
         runLoop = loop
-        runLoopLock.unlock()
+        stateLock.unlock()
+
+        defer { exited.signal() }
+
+        // `stop()` won the race and already tore everything down.
+        guard let source, let port, let loop else { return }
 
         CFRunLoopAddSource(loop, source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        CGEvent.tapEnable(tap: port, enable: true)
 
         CFRunLoopRun()
 
         CFRunLoopRemoveSource(loop, source, .commonModes)
+    }
+
+    /// Snapshot of the mach port for use on the tap thread.
+    private func currentTap() -> CFMachPort? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return tap
     }
 
     // MARK: - Callback path (runs on the tap thread)
@@ -168,7 +221,7 @@ final class EventTapController {
     }
 
     private func handleTapDisabled(cause: String) {
-        guard let tap else { return }
+        guard let tap = currentTap() else { return }
         CGEvent.tapEnable(tap: tap, enable: true)
 
         let now = Date().timeIntervalSinceReferenceDate

@@ -1,4 +1,5 @@
 import AppKit
+import DodomaCore
 import SwiftUI
 
 /// Main-thread mirror of the latest `BufferSnapshot`.
@@ -113,7 +114,7 @@ private struct DebugView: View {
                 .padding(4)
             }
 
-            Text("Last \(TypingPipeline.debugEventLimit) events")
+            Text("Last \(TypingSession.debugEventLimit) events")
                 .font(.headline)
 
             EventTable(
