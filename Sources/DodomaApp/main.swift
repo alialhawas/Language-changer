@@ -1,10 +1,7 @@
 import AppKit
 
-let subcommandFlags: Set<String> = ["--render", "--score", "--decide", "--eval"]
-
-if let flag = CommandLine.arguments.dropFirst().first(where: { subcommandFlags.contains($0) }) {
-    FileHandle.standardError.write(Data("\(flag): not implemented yet\n".utf8))
-    exit(1)
+if let command = CLI.parse(Array(CommandLine.arguments.dropFirst())) {
+    exit(CLI.run(command))
 }
 
 let app = NSApplication.shared

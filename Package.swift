@@ -19,7 +19,8 @@ let package = Package(
         .testTarget(
             name: "DodomaCoreTests",
             dependencies: ["DodomaCore"],
-            path: "Tests/DodomaCoreTests"
+            path: "Tests/DodomaCoreTests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

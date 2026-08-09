@@ -4,7 +4,9 @@ APP_BUNDLE := build/$(APP_NAME).app
 CONTENTS := $(APP_BUNDLE)/Contents
 SIGN_IDENTITY := Dodoma Dev
 
-.PHONY: build bundle sign install run test logs ngrams clean
+FIXTURES := Tests/DodomaCoreTests/Fixtures/layout-tables.json
+
+.PHONY: build bundle sign install run test fixtures logs ngrams clean
 
 build:
 	swift build -c release
@@ -46,6 +48,11 @@ run: build bundle sign
 
 test:
 	swift test
+
+# Snapshots this machine's ABC and Arabic uchr tables so renderer tests stay
+# deterministic regardless of which input sources are enabled where they run.
+fixtures:
+	swift run Dodoma --dump-layout-fixtures $(FIXTURES)
 
 logs:
 	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --style compact

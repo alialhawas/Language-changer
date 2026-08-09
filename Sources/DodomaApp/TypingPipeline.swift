@@ -15,9 +15,14 @@ final class TypingPipeline {
     /// Called on `queue` after every processed event.
     var onChange: ((BufferSnapshot) -> Void)?
 
+    /// Shared, cached view of the enabled keyboard layouts. Owned here because
+    /// this is where the invalidation notification is observed.
+    let layoutEngine = LayoutEngine()
+
     private let session: TypingSession
     private var workspaceObserver: NSObjectProtocol?
     private var inputSourceObserver: NSObjectProtocol?
+    private var enabledSourcesObserver: NSObjectProtocol?
 
     init() {
         session = TypingSession(
@@ -44,6 +49,16 @@ final class TypingPipeline {
         ) { [weak self] _ in
             self?.submit(.inputSourceChanged(at: Self.now()))
         }
+
+        let enabledSourcesName = Notification.Name(
+            kTISNotifyEnabledKeyboardInputSourcesChanged as String)
+        enabledSourcesObserver = DistributedNotificationCenter.default().addObserver(
+            forName: enabledSourcesName,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.layoutEngine.invalidate()
+        }
     }
 
     func stop() {
@@ -54,6 +69,10 @@ final class TypingPipeline {
         if let inputSourceObserver {
             DistributedNotificationCenter.default().removeObserver(inputSourceObserver)
             self.inputSourceObserver = nil
+        }
+        if let enabledSourcesObserver {
+            DistributedNotificationCenter.default().removeObserver(enabledSourcesObserver)
+            self.enabledSourcesObserver = nil
         }
     }
 

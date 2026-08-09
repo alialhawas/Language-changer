@@ -48,9 +48,22 @@ make sign       # sign the bundle
 make install    # build + bundle + sign, install to /Applications, launch
 make run        # build + bundle + sign, launch from build/ without installing
 make test       # swift test
+make fixtures   # re-snapshot the ABC/Arabic uchr tables used by renderer tests
 make logs       # stream os_log output for subsystem com.ali.dodoma
 make clean      # remove .build and build
 ```
+
+## Command-line harness
+
+The executable also runs headless, with no permissions required:
+
+```
+swift run Dodoma --render "HC MV; HKH HSMDIH HGDML"
+```
+
+`--render` maps the Latin text to US/ANSI keycodes and prints what those
+keycodes would produce under every enabled keyboard layout, once per caps
+mode. For the example above the Arabic lines read `اذ ودك انا اسويها اليوم`.
 
 ## Granting permissions
 
