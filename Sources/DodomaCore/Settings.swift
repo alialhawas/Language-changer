@@ -30,9 +30,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Reserved for apps whose accessibility tree is expensive to touch —
     /// Chromium force-enables its full a11y tree the moment anything reads it,
     /// which costs the user memory and CPU for the rest of the session. Empty
-    /// by default and there is no UI for it yet; edit the JSON blob by hand.
-    /// Skipping the read means the auto-apply runs unverified, so the entry is
-    /// a deliberate trade of safety for cost.
+    /// by default; edited from the Advanced tab of the settings window, which
+    /// spells out what is being given up. Skipping the read means the
+    /// auto-apply runs unverified, so the entry is a deliberate trade of safety
+    /// for cost.
     public var axVerifySkip: Set<String>
 
     public init(

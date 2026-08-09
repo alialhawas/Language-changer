@@ -6,6 +6,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var menuBarController: MenuBarController?
     private var debugWindowController: DebugWindowController?
+    private var settingsWindowController: SettingsWindowController?
+    private var onboardingWindowController: OnboardingWindowController?
     private var pipeline: TypingPipeline?
     private var eventTap: EventTapController?
     private var suggestionController: SuggestionController?
@@ -39,6 +41,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         debugWindowController = debugWindow
         controller.onShowDebugWindow = { [weak debugWindow] in
             debugWindow?.show()
+        }
+
+        let settingsWindow = SettingsWindowController(settings: settings)
+        settingsWindowController = settingsWindow
+        controller.onShowSettings = { [weak settingsWindow] in
+            settingsWindow?.show()
+        }
+
+        let onboarding = OnboardingWindowController(onDone: { [weak self] in
+            self?.settings.setOnboardingCompleted(true)
+        })
+        onboardingWindowController = onboarding
+        controller.onShowOnboarding = { [weak onboarding] in
+            onboarding?.show()
         }
 
         let pipeline = TypingPipeline(
@@ -109,8 +125,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Both halves of the safety layer feed the pipeline the same way: a
         // flag it caches on its own queue, plus a buffer drop on the way up.
-        settings.onChange = { [weak pipeline] updated in
+        //
+        // One notification, two listeners. The settings window is the second
+        // because it has to show what was actually persisted rather than what
+        // its own control was set to, and because a change made from the menu
+        // has to move the switch in an open window.
+        settings.onChange = { [weak pipeline, weak settingsWindow] updated in
             pipeline?.apply(updated)
+            settingsWindow?.settingsChanged(updated)
         }
         controller.onPauseChanged = { [weak self] _ in
             self?.refreshPermissions()
@@ -145,6 +167,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         Permissions.requestInputMonitoring()
 
         refreshPermissions()
+
+        // After the first permission read, so the walkthrough opens only when
+        // there is genuinely something missing.
+        if Onboarding.isNeeded(
+            permissions: Permissions.current(), hasCompleted: settings.onboardingCompleted)
+        {
+            onboarding.show()
+        }
 
         let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.refreshPermissions()
@@ -201,6 +231,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             degraded: tapDegraded)
         // Detection — and therefore injection — only runs while the tap does.
         pipeline?.setCaptureActive(capturing && state.accessibility && state.inputMonitoring)
+        // Both windows show state that changes outside the app — the grants and
+        // the login-item registration — and both no-op while hidden, so they
+        // ride this poll rather than starting timers of their own. After the
+        // pipeline, which is the part with a deadline.
+        onboardingWindowController?.update(permissions: state)
+        settingsWindowController?.poll()
 
         guard state != lastState || capturing != lastCapturing else { return }
         lastState = state

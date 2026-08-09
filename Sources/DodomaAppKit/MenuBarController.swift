@@ -45,7 +45,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// The menu's rendering of `Hotkeys.undoLastFix`. The letter is spelled out
     /// because a key equivalent is a character and a hot key is a key code, and
     /// nothing translates one into the other without asking the active layout.
-    /// Key code 6 is Z; `MenuBarControllerTests` pins the pair together.
+    /// Key code 6 is Z; `SettingsCopyTests` pins the pair together.
     static let undoKeyEquivalent = "z"
     static var undoModifiers: NSEvent.ModifierFlags {
         modifierFlags(Hotkeys.undoLastFix.modifiers)
@@ -62,6 +62,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     /// Invoked when the user picks "Debug Window".
     var onShowDebugWindow: (() -> Void)?
+    /// Invoked when the user picks "Settings…".
+    var onShowSettings: (() -> Void)?
+    /// Invoked when the user picks "Onboarding…".
+    var onShowOnboarding: (() -> Void)?
     /// Invoked after the user toggles the pause item, with the new value.
     var onPauseChanged: ((Bool) -> Void)?
     /// Invoked when the user picks "Undo Last Fix".
@@ -70,11 +74,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// to undo *right now*? It expires on a timer as well as on events, so it
     /// cannot be a value pushed here after the fact.
     var isUndoAvailable: (() -> Bool)?
-
-    private static let accessibilitySettingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-    private static let inputMonitoringSettingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -239,6 +238,23 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // ⌘, is the standard chord, and it is decoration for the same reason
+        // the undo chord is: Dodoma is an accessory app, so nothing dispatches
+        // a key equivalent to it unless one of its own windows is key.
+        let settingsItem = NSMenuItem(title: "Settings…",
+                                      action: #selector(showSettings),
+                                      keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        let onboardingItem = NSMenuItem(title: "Onboarding…",
+                                        action: #selector(showOnboarding),
+                                        keyEquivalent: "")
+        onboardingItem.target = self
+        menu.addItem(onboardingItem)
+
+        menu.addItem(.separator())
+
         let accessibilityItem = NSMenuItem(title: "Open Accessibility Settings…",
                                            action: #selector(openAccessibilitySettings),
                                            keyEquivalent: "")
@@ -341,11 +357,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
-        NSWorkspace.shared.open(Self.accessibilitySettingsURL)
+        NSWorkspace.shared.open(PermissionPanes.accessibility)
     }
 
     @objc private func openInputMonitoringSettings() {
-        NSWorkspace.shared.open(Self.inputMonitoringSettingsURL)
+        NSWorkspace.shared.open(PermissionPanes.inputMonitoring)
+    }
+
+    @objc private func showSettings() {
+        onShowSettings?()
+    }
+
+    @objc private func showOnboarding() {
+        onShowOnboarding?()
     }
 
     @objc private func showDebugWindow() {

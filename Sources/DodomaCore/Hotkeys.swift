@@ -52,8 +52,9 @@ public struct HotkeyBinding: Equatable, Sendable {
     }
 }
 
-/// The bindings, in one place. There is no rebinding UI yet (M8); when there is,
-/// it replaces this table and nothing else.
+/// The bindings, in one place. Rebinding is not supported — the settings
+/// window shows the two chords read-only and says so. When it is, it replaces
+/// this table and nothing else.
 public enum Hotkeys {
     /// ⌘⌥Z. Key code 6 is Z on every layout.
     public static let undoLastFix = HotkeyBinding(

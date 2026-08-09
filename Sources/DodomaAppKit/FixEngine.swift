@@ -81,8 +81,8 @@ protocol FixApplying: AnyObject {
 ///
 /// There is no rollback. If the sequence fails halfway the screen is left in
 /// whatever state it reached and the failure is logged as a fault with the
-/// counts; undo is M7's problem and a silent half-repair would be worse than a
-/// visible one.
+/// counts. A silent half-repair would be worse than a visible one, and the
+/// undo slot is only armed by a sequence that completed.
 final class FixEngine: FixApplying {
     /// Every delay in the sequence, in one place, so per-app tuning later is a
     /// table lookup rather than a hunt through the injector.

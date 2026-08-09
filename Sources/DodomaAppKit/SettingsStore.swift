@@ -23,6 +23,11 @@ final class SettingsStore {
         /// `defaults write com.ali.dodoma debugLogging -bool YES` keeps working
         /// without a settings-window round trip.
         static let debugLogging = "debugLogging"
+        /// Set once the user has pressed Done in the onboarding window. Kept
+        /// out of the settings blob deliberately: it is a record of something
+        /// that happened, not a preference, and restoring a corrupt blob to the
+        /// defaults must not walk the user back through onboarding.
+        static let onboardingCompleted = "onboardingCompleted"
     }
 
     static let shared = SettingsStore()
@@ -95,10 +100,52 @@ final class SettingsStore {
         mutate { $0.appPolicies[bundleID] = policy }
     }
 
+    /// Drops the override entirely, so the app falls back to `defaultPolicy`.
+    ///
+    /// Not the same as writing the default policy into the entry: presence in
+    /// the map is what `mergingSeedDefaults` reads as "the user has decided
+    /// about this app", so a removed entry can be re-seeded by a later release
+    /// while an explicit one never is.
+    func removePolicy(for bundleID: String) {
+        mutate { $0.appPolicies[bundleID] = nil }
+    }
+
+    func setDefaultPolicy(_ policy: AppPolicy) {
+        mutate { $0.defaultPolicy = policy }
+    }
+
     func setAggressiveness(_ aggressiveness: Aggressiveness) {
         mutate { $0.aggressiveness = aggressiveness }
     }
 
+    /// Switching it off also clears the bare `debugLogging` key.
+    ///
+    /// The getter is the OR of the two, so leaving the bare key set would make
+    /// the switch look broken: the user turns it off and typed text keeps
+    /// reaching `os_log`.
+    func setDebugLogging(_ enabled: Bool) {
+        if !enabled, defaults.object(forKey: Key.debugLogging) != nil {
+            defaults.removeObject(forKey: Key.debugLogging)
+        }
+        mutate { $0.debugLogging = enabled }
+    }
+
+    func setAXVerifySkip(_ skip: Set<String>) {
+        mutate { $0.axVerifySkip = skip }
+    }
+
+    // MARK: - Onboarding
+
+    var onboardingCompleted: Bool { defaults.bool(forKey: Key.onboardingCompleted) }
+
+    func setOnboardingCompleted(_ completed: Bool) {
+        defaults.set(completed, forKey: Key.onboardingCompleted)
+    }
+
+    /// The single write path behind every setter above. Main thread: each
+    /// caller is a menu item, a hot key handler or a settings-window control,
+    /// and `onChange` is delivered synchronously on the calling thread to
+    /// whoever owns the pipeline.
     private func mutate(_ body: (inout AppSettings) -> Void) {
         lock.lock()
         var updated = cached

@@ -3,6 +3,6 @@ import XCTest
 
 final class VersionTests: XCTestCase {
     func testVersionIsSet() {
-        XCTAssertEqual(Dodoma.version, "0.1.0")
+        XCTAssertEqual(Dodoma.version, "1.0.0")
     }
 }
