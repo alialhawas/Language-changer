@@ -174,6 +174,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             permissions: Permissions.current(), hasCompleted: settings.onboardingCompleted)
         {
             onboarding.show()
+        } else {
+            // Both grants are already in place, so there is nothing to walk
+            // through — and the flag has to be set anyway. Without this, an
+            // install that was granted before Dodoma ever ran keeps the flag
+            // unset forever, and the first time a grant is revoked (which
+            // `scripts/reset-tcc.sh` in the README's own troubleshooting does)
+            // the next login opens a window that takes the screen. Onboarding
+            // is for the first run, not for every later permission problem;
+            // the menu's status line handles those.
+            settings.setOnboardingCompleted(true)
         }
 
         let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in

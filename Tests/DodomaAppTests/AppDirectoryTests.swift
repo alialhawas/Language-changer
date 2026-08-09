@@ -81,14 +81,15 @@ final class SettingsCopyTests: XCTestCase {
             "the menu item and the settings window name the same key")
     }
 
-    /// ⌘ then ⌥, which is the order the menu, the README and the onboarding
-    /// prose all use.
+    /// macOS's canonical modifier order, ⌃⌥⇧⌘ — the order `NSMenuItem` renders
+    /// a key equivalent in, which is what the settings window is asking the
+    /// user to compare its read-only row against.
     private static func chord(_ binding: HotkeyBinding, letter: String) -> String {
         var text = ""
         if binding.modifiers.contains(.control) { text += "⌃" }
-        if binding.modifiers.contains(.command) { text += "⌘" }
         if binding.modifiers.contains(.option) { text += "⌥" }
         if binding.modifiers.contains(.shift) { text += "⇧" }
+        if binding.modifiers.contains(.command) { text += "⌘" }
         return text + letter
     }
 }

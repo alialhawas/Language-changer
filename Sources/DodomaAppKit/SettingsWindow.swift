@@ -38,13 +38,20 @@ final class SettingsModel: ObservableObject {
     init(store: SettingsStore) {
         self.store = store
         settings = store.settings
-        rebuildRows()
+        // The rows are deliberately not built here. This model is created at
+        // launch for a window that may never be opened, and building them costs
+        // two LaunchServices lookups per policy entry. `refresh()` builds them
+        // on first show.
     }
 
     // MARK: - Reading
 
+    /// Called on every show, and the only place the rows are built from
+    /// scratch. Everything the window displays is re-read here, so `accept` is
+    /// free to do nothing while the window is hidden.
     func refresh() {
-        accept(store.settings)
+        settings = store.settings
+        rebuildRows()
         refreshLoginStatus()
     }
 
@@ -55,10 +62,18 @@ final class SettingsModel: ObservableObject {
 
     /// The store's change notification. Also the tail of every write below, so
     /// the published value is always the persisted one.
+    ///
+    /// The tables are rebuilt only when the maps they are built from actually
+    /// changed. Aggressiveness, pause and debug logging move far more often —
+    /// ⌘⌥P is a global chord meant for emergencies — and each rebuild is two
+    /// LaunchServices round trips per row on the main thread.
     func accept(_ updated: AppSettings) {
         guard updated != settings else { return }
+        let tablesChanged =
+            updated.appPolicies != settings.appPolicies
+            || updated.axVerifySkip != settings.axVerifySkip
         settings = updated
-        rebuildRows()
+        if tablesChanged { rebuildRows() }
     }
 
     private func rebuildRows() {
@@ -179,7 +194,13 @@ final class SettingsWindowController {
         model.refreshLoginStatus()
     }
 
+    /// Same guard as `poll()`, and for a stronger reason: this one is called
+    /// from `SettingsStore.onChange`, so without it every pause toggle for the
+    /// rest of the session would rebuild the policy tables for a window nobody
+    /// has opened. `show()` calls `refresh()`, so a hidden window cannot go
+    /// stale by being skipped here.
     func settingsChanged(_ settings: AppSettings) {
+        guard isVisible else { return }
         model.accept(settings)
     }
 
@@ -531,6 +552,11 @@ enum SettingsCopy {
     /// chord is characters, and nothing translates one into the other without
     /// asking the active layout. `SettingsCopyTests` pins these against
     /// `Hotkeys` so the two cannot drift.
-    static let undoChord = "⌘⌥Z"
-    static let pauseChord = "⌘⌥P"
+    ///
+    /// The modifiers are in macOS's canonical order — ⌃⌥⇧⌘ — which is how
+    /// `NSMenuItem` renders the same chord two items further up the menu.
+    /// Prose elsewhere writes it ⌘⌥Z; these two are what the user is asked to
+    /// compare against the menu, so they match the menu.
+    static let undoChord = "⌥⌘Z"
+    static let pauseChord = "⌥⌘P"
 }

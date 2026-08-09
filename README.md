@@ -152,6 +152,11 @@ follow. The event tap keeps running so that unpausing needs no permission dance.
 | **Debug Window** | Live buffer, decisions and key log |
 | **Quit Dodoma** | |
 
+⌘⌥Z and ⌘⌥P are registered with Carbon and work from anywhere, whatever you are
+typing in. The chords on **Settings…** and **Quit Dodoma** are ordinary menu key
+equivalents, and Dodoma has no menu bar of its own — it is an accessory app — so
+they only fire while one of its own windows is the key window. Use the menu.
+
 ### Settings
 
 **General** — aggressiveness, with a line explaining each level; the pause
@@ -271,7 +276,7 @@ Its contents are sensitive — it is the one place typed text is displayed.
 
 ## Manual verification runbook
 
-[`docs/manual-checklist.md`](docs/manual-checklist.md) is the full 89-row
+[`docs/manual-checklist.md`](docs/manual-checklist.md) is the full 90-row
 verification pass: permissions and capture, the automatic fix, the safety layer,
 suggestions, undo, and the settings surface, with the expected outcome for each
 and the six must-run rows marked. Nothing in it can be checked by the test
