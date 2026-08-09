@@ -1,7 +1,7 @@
 import AppKit
 import DodomaCore
 
-final class MenuBarController {
+final class MenuBarController: NSObject, NSMenuDelegate {
     /// How long the status item shows what just happened before going back to
     /// its idle icon.
     private static let flashDuration: TimeInterval = 1.5
@@ -13,10 +13,18 @@ final class MenuBarController {
     /// Longest each field of the "Last fix" line may be before it is
     /// middle-ellipsised.
     private static let fieldLimit = 20
+    /// Longest an app name may be in the "Mode for …" title.
+    private static let appNameLimit = 24
+
+    private let settings: SettingsStore
+    private let frontmost: FrontmostAppTracker
 
     private let statusItem: NSStatusItem
     private let statusLineItem: NSMenuItem
     private let lastFixItem: NSMenuItem
+    private let pauseItem: NSMenuItem
+    private let modeItem: NSMenuItem
+    private var modeOptions: [AppPolicy: NSMenuItem] = [:]
     private let idleImage: NSImage?
 
     /// Bumped by every flash so a stale restore cannot undo a newer one.
@@ -24,6 +32,8 @@ final class MenuBarController {
 
     /// Invoked when the user picks "Debug Window".
     var onShowDebugWindow: (() -> Void)?
+    /// Invoked after the user toggles the pause item, with the new value.
+    var onPauseChanged: ((Bool) -> Void)?
 
     private static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
@@ -36,16 +46,23 @@ final class MenuBarController {
         return formatter
     }()
 
-    init() {
+    init(settings: SettingsStore, frontmost: FrontmostAppTracker) {
+        self.settings = settings
+        self.frontmost = frontmost
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         statusLineItem.isEnabled = false
         lastFixItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         lastFixItem.isEnabled = false
         lastFixItem.isHidden = true
+        pauseItem = NSMenuItem(title: "Pause Dodoma", action: nil, keyEquivalent: "")
+        modeItem = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
 
         idleImage = NSImage(
             systemSymbolName: "character.book.closed", accessibilityDescription: "Dodoma")
+
+        super.init()
 
         if let button = statusItem.button {
             if let idleImage {
@@ -58,8 +75,10 @@ final class MenuBarController {
         statusItem.menu = makeMenu()
     }
 
-    func update(with state: PermissionState, capturing: Bool) {
-        statusLineItem.title = Self.statusText(for: state, capturing: capturing)
+    func update(with state: PermissionState, capturing: Bool, secureInput: Bool) {
+        statusLineItem.title = Self.statusText(
+            for: state, capturing: capturing, paused: settings.paused, secureInput: secureInput)
+        pauseItem.state = settings.paused ? .on : .off
     }
 
     // MARK: - Fix feedback
@@ -103,18 +122,35 @@ final class MenuBarController {
         }
     }
 
-    private static func statusText(for state: PermissionState, capturing: Bool) -> String {
+    private static func statusText(
+        for state: PermissionState, capturing: Bool, paused: Bool, secureInput: Bool
+    ) -> String {
+        // Permissions first: without them nothing else in this line is true.
         if !state.accessibility { return "Needs Accessibility permission" }
         if !state.inputMonitoring { return "Needs Input Monitoring permission" }
+        if paused { return "Paused" }
+        if secureInput { return "Paused — secure input" }
         return capturing ? "Active (capturing)" : "Active"
     }
+
+    // MARK: - Menu
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        menu.delegate = self
 
         menu.addItem(statusLineItem)
         menu.addItem(lastFixItem)
+        menu.addItem(.separator())
+
+        pauseItem.target = self
+        pauseItem.action = #selector(togglePause)
+        menu.addItem(pauseItem)
+
+        modeItem.submenu = makeModeSubmenu()
+        menu.addItem(modeItem)
+
         menu.addItem(.separator())
 
         let accessibilityItem = NSMenuItem(title: "Open Accessibility Settings…",
@@ -146,6 +182,66 @@ final class MenuBarController {
         menu.addItem(quitItem)
 
         return menu
+    }
+
+    private func makeModeSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for (policy, title) in Self.modeTitles {
+            let item = NSMenuItem(title: title, action: #selector(selectMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = policy.rawValue
+            submenu.addItem(item)
+            modeOptions[policy] = item
+        }
+        return submenu
+    }
+
+    /// Ordered most permissive first, which is also the order they read in.
+    private static let modeTitles: [(AppPolicy, String)] = [
+        (.normal, "Normal"),
+        (.suggestOnly, "Suggest only"),
+        (.off, "Off"),
+    ]
+
+    /// The menu is rebuilt from the live frontmost app every time it opens.
+    ///
+    /// Opening a status-item menu does not change the frontmost application for
+    /// an accessory app, so this reads the app the user was actually typing in.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let app = frontmost.lastNonSelfApp
+        let policy = settings.policy(for: app.bundleID)
+
+        modeItem.title =
+            "Mode for \(TextDisplay.middleTruncate(app.displayName, limit: Self.appNameLimit))"
+        modeItem.isEnabled = app.bundleID != nil
+        for (option, item) in modeOptions {
+            item.state = option == policy ? .on : .off
+            item.isEnabled = app.bundleID != nil
+        }
+        pauseItem.state = settings.paused ? .on : .off
+    }
+
+    // MARK: - Actions
+
+    @objc private func togglePause() {
+        let paused = !settings.paused
+        settings.setPaused(paused)
+        pauseItem.state = paused ? .on : .off
+        onPauseChanged?(paused)
+    }
+
+    @objc private func selectMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let policy = AppPolicy(rawValue: raw),
+              let bundleID = frontmost.lastNonSelfApp.bundleID
+        else { return }
+        settings.setPolicy(policy, for: bundleID)
+        Log.app.info(
+            "policy for \(bundleID, privacy: .public) set to \(policy.rawValue, privacy: .public)")
+        for (option, item) in modeOptions {
+            item.state = option == policy ? .on : .off
+        }
     }
 
     @objc private func openAccessibilitySettings() {

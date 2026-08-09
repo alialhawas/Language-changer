@@ -7,10 +7,11 @@ detects when a word only makes sense under the other layout, and rewrites it in
 place. It runs as a background agent with no dock icon, does no networking, and
 keeps everything it observes on the machine.
 
-Current state: M4 — capture, layout rendering, the offline detection brain
-(language models, guards, segmenter, decision engine) and the automatic fix
-itself. While the safety layer is still M5, automatic rewriting is allowlisted
-to TextEdit and nothing else.
+Current state: M5 — capture, layout rendering, the offline detection brain
+(language models, guards, segmenter, decision engine), the automatic fix itself
+and the safety layer. Automatic rewriting is no longer confined to TextEdit: it
+is on in every application except the ones listed under
+[Per-app modes](#per-app-modes) below.
 
 ## Prerequisites
 
@@ -104,24 +105,67 @@ screen, it deletes the offending text, types the corrected text in its place and
 switches the keyboard layout, then flashes `⇄ ع/E` in the menu bar and records a
 `Last fix:` line in the menu.
 
-- Automatic rewriting only happens in TextEdit until the M5 safety layer lands.
-  Everywhere else the decision is evaluated and discarded.
 - A weaker match is only offered, not applied. The suggestion panel is M6, so
   for now the status item blinks `?` and the verdict appears in the debug
   window's Decisions section.
 - Nothing is injected while Shift, Command, Control or Option is held; the fix
   is retried three times and then abandoned. Caps Lock is not a blocker — it is
   how most of this text gets typed in the first place.
+- Before anything is deleted, Dodoma reads the text in front of the caret over
+  the accessibility API and checks that it is exactly what the buffer says was
+  typed. If it does not match, or the application will not report its caret at
+  all, the automatic fix is downgraded to a suggestion instead. Applications
+  with no usable accessibility text — some terminals and web views — therefore
+  suggest rather than rewrite.
 
-Two preferences are read from `UserDefaults`:
+## Safety
+
+Four independent things stop Dodoma from touching text it should not:
+
+- **Pause.** *Pause Dodoma* in the menu stops all buffering and evaluation. The
+  event tap keeps running so that unpausing needs no permission dance, but
+  nothing is recorded while the pause is on.
+- **Secure input.** `IsSecureEventInputEnabled()` is polled every second and
+  re-read on every application switch. While it is on — login window, `sudo`,
+  most password fields — the buffer is dropped and the menu reads
+  `Paused — secure input`.
+- **Secure fields.** Before a fix is shown or applied, the focused element is
+  checked for the accessibility secure-text-field subrole. A password field
+  drops the buffer.
+- **Verify before delete.** See above: a caret whose text does not match the
+  buffer never gets a delete burst.
+
+### Per-app modes
+
+*Mode for <app>* in the menu sets the frontmost application to Normal, Suggest
+only or Off, and the choice is remembered. Everything not listed here starts at
+Normal.
+
+| Mode | Applications seeded on a fresh install |
+| --- | --- |
+| Suggest only | Terminal, iTerm2, Warp, Ghostty, kitty, Alacritty, WezTerm, Hyper |
+| Off | 1Password 7 and 8, Bitwarden, Keychain Access, SecurityAgent, loginwindow |
+
+Adding an application to the seed lists in a later release does not overwrite a
+mode the user has already chosen for it.
+
+Preferences live in a single JSON blob under the `settings` key in
+`com.ali.dodoma`. The older bare keys are migrated on first launch, and
+`debugLogging` is still honoured as a live override:
 
 ```
-defaults write com.ali.dodoma aggressiveness -string balanced  # or conservative / eager
-defaults write com.ali.dodoma debugLogging   -bool   NO        # YES also logs region text
+defaults write com.ali.dodoma debugLogging -bool YES   # also logs region text
+defaults read  com.ali.dodoma settings                 # the whole settings blob
 ```
 
 `debugLogging` is the only switch that lets typed text reach `os_log`, under the
 `decision` category. It is off by default.
+
+The blob also carries `axVerifySkip`, an array of bundle identifiers for which
+the verify-before-delete read is skipped. It is empty, has no UI, and exists for
+applications where touching the accessibility tree is expensive — Chromium
+force-enables its full tree the moment anything reads it. Adding an entry trades
+that cost for an unverified delete.
 
 ## Granting permissions
 
@@ -130,6 +174,8 @@ menu-bar menu:
 
 - `Needs Accessibility permission` — Dodoma cannot read or replace text yet.
 - `Needs Input Monitoring permission` — Dodoma cannot observe keystrokes yet.
+- `Paused` — the pause switch is on.
+- `Paused — secure input` — another process has secure event input enabled.
 - `Active` — both grants are in place.
 
 To grant them:

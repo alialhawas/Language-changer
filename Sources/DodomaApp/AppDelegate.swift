@@ -10,12 +10,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastState: PermissionState?
     private var lastCapturing = false
 
+    /// The single frontmost-app observer, shared by the pipeline (which needs
+    /// the switch as a buffer-reset event), the injector (which re-checks
+    /// between keystrokes) and the menu (which labels its per-app submenu).
+    private let frontmost = FrontmostAppTracker()
+    private let secureInput = SecureInputMonitor()
+    private let settings = SettingsStore.shared
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
 
         preloadLanguageModels()
 
-        let controller = MenuBarController()
+        let controller = MenuBarController(settings: settings, frontmost: frontmost)
         menuBarController = controller
 
         let debugWindow = DebugWindowController()
@@ -24,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             debugWindow?.show()
         }
 
-        let pipeline = TypingPipeline()
+        let pipeline = TypingPipeline(
+            settings: settings, frontmost: frontmost, secureInput: secureInput)
         pipeline.onChange = { [weak debugWindow] snapshot in
             debugWindow?.accept(snapshot)
         }
@@ -39,6 +47,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pipeline.start()
         self.pipeline = pipeline
+
+        // Both halves of the safety layer feed the pipeline the same way: a
+        // flag it caches on its own queue, plus a buffer drop on the way up.
+        settings.onChange = { [weak pipeline] updated in
+            pipeline?.apply(updated)
+        }
+        controller.onPauseChanged = { [weak self] _ in
+            self?.refreshPermissions()
+        }
+        secureInput.onChange = { [weak self] active in
+            self?.pipeline?.setSecureInput(active)
+            self?.refreshPermissions()
+        }
+        // Activating an app is the usual way secure input comes on between two
+        // polls, so it is checked there as well as every second.
+        frontmost.addObserver { [weak self] _ in
+            self?.secureInput.refresh()
+        }
+        secureInput.start()
+        pipeline.setSecureInput(secureInput.isEnabled)
+        pipeline.apply(settings.settings)
 
         eventTap = EventTapController(queue: pipeline.queue) { [weak pipeline] event in
             pipeline?.handle(event)
@@ -59,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         pollTimer?.invalidate()
         pollTimer = nil
+        secureInput.stop()
         eventTap?.stop()
         pipeline?.stop()
     }
@@ -96,7 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let capturing = eventTap?.isRunning ?? false
 
-        menuBarController?.update(with: state, capturing: capturing)
+        menuBarController?.update(
+            with: state, capturing: capturing, secureInput: secureInput.isEnabled)
         // Detection — and therefore injection — only runs while the tap does.
         pipeline?.setCaptureActive(capturing && state.accessibility && state.inputMonitoring)
 

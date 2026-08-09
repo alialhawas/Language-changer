@@ -1,7 +1,7 @@
 import Foundation
 
 /// How willing Dodoma is to rewrite text without asking. A user preference.
-public enum Aggressiveness: String, Sendable, CaseIterable {
+public enum Aggressiveness: String, Codable, Sendable, CaseIterable {
     case conservative
     case balanced
     case eager
@@ -15,9 +15,10 @@ public enum Aggressiveness: String, Sendable, CaseIterable {
     }
 }
 
-/// What the app is currently allowed to do. Owned by the safety layer (M5);
-/// defined here because the decision function is the single place that reads it.
-public enum AppPolicy: String, Sendable, CaseIterable {
+/// What the app is currently allowed to do. Owned by the safety layer
+/// (`AppSettings`); defined here because the decision function is the single
+/// place that reads it.
+public enum AppPolicy: String, Codable, Sendable, CaseIterable {
     /// Auto-fix and suggest.
     case normal
     /// Never rewrite silently; a suggestion is still allowed.

@@ -3,37 +3,110 @@ import Foundation
 
 /// User preferences, backed by `UserDefaults`.
 ///
-/// Only the keys a shipped milestone actually reads live here; M8 grows this
-/// into the settings window's model. `UserDefaults` is thread safe, so the
-/// pipeline queue may read straight through it.
+/// One JSON blob under the `settings` key, not a key per preference: the
+/// per-app policy map has no fixed key set, and a single blob cannot be caught
+/// half-upgraded. `AppSettings` owns the shape, the seeding and the migration;
+/// this type owns the storage, the lock and the change notification.
+///
+/// Read from the pipeline queue on every evaluation and written from the main
+/// thread by the menu, so the cached value is behind a lock rather than being
+/// re-decoded per read.
 final class SettingsStore {
     enum Key {
-        static let aggressiveness = "aggressiveness"
+        static let settings = "settings"
+        /// Written by builds before the blob existed; read once, at migration.
+        static let legacyAggressiveness = "aggressiveness"
+        /// Still honoured as a live override so that the documented
+        /// `defaults write com.ali.dodoma debugLogging -bool YES` keeps working
+        /// without a settings-window round trip.
         static let debugLogging = "debugLogging"
     }
 
     static let shared = SettingsStore()
 
     private let defaults: UserDefaults
+    private let lock = NSLock()
+    private var cached: AppSettings
 
-    init(defaults: UserDefaults = .standard) {
+    /// Called on the thread that made the change, after it has been persisted.
+    var onChange: ((AppSettings) -> Void)?
+
+    /// - Parameter defaults: `UserDefaults(suiteName:)` returns nil when the
+    ///   suite is the running app's own bundle identifier, which is exactly the
+    ///   case inside the shipped bundle — and there `.standard` already *is*
+    ///   the `com.ali.dodoma` domain. Running from `swift run`, where the
+    ///   process has no bundle identifier, the suite resolves and writes to the
+    ///   same plist. Either way the settings land in one place.
+    init(defaults: UserDefaults = UserDefaults(suiteName: "com.ali.dodoma") ?? .standard) {
         self.defaults = defaults
+        let loaded = AppSettings.load(
+            storedJSON: defaults.data(forKey: Key.settings),
+            legacyAggressiveness: defaults.string(forKey: Key.legacyAggressiveness),
+            legacyDebugLogging: defaults.bool(forKey: Key.debugLogging))
+        cached = loaded
+        // Writing the merged result straight back is what makes the seed merge
+        // durable: a policy added by this release is on disk before the user
+        // touches anything, so a later release can tell "never seen" from
+        // "seen and left alone".
+        persist(loaded)
     }
 
-    /// How willing Dodoma is to rewrite without asking. Defaults to balanced,
-    /// which is what the seed corpus was labelled against.
-    var aggressiveness: Aggressiveness {
-        get {
-            defaults.string(forKey: Key.aggressiveness)
-                .flatMap(Aggressiveness.init(rawValue:)) ?? .balanced
+    // MARK: - Reading
+
+    var settings: AppSettings {
+        lock.lock()
+        defer { lock.unlock() }
+        return cached
+    }
+
+    var aggressiveness: Aggressiveness { settings.aggressiveness }
+
+    var paused: Bool { settings.paused }
+
+    /// The blob's value, or the bare key, whichever is on.
+    var debugLogging: Bool { settings.debugLogging || defaults.bool(forKey: Key.debugLogging) }
+
+    func policy(for bundleID: String?) -> AppPolicy { settings.policy(for: bundleID) }
+
+    func skipsAXVerify(_ bundleID: String?) -> Bool { settings.skipsAXVerify(bundleID) }
+
+    // MARK: - Writing
+
+    func setPaused(_ paused: Bool) {
+        mutate { $0.paused = paused }
+    }
+
+    func setPolicy(_ policy: AppPolicy, for bundleID: String) {
+        mutate { $0.appPolicies[bundleID] = policy }
+    }
+
+    func setAggressiveness(_ aggressiveness: Aggressiveness) {
+        mutate { $0.aggressiveness = aggressiveness }
+    }
+
+    private func mutate(_ body: (inout AppSettings) -> Void) {
+        lock.lock()
+        var updated = cached
+        body(&updated)
+        guard updated != cached else {
+            lock.unlock()
+            return
         }
-        set { defaults.set(newValue.rawValue, forKey: Key.aggressiveness) }
+        cached = updated
+        lock.unlock()
+
+        persist(updated)
+        onChange?(updated)
     }
 
-    /// Opt-in switch for the `decision` log category, which is the only place
-    /// typed text may reach os_log. Off unless the user turns it on with
-    /// `defaults write com.ali.dodoma debugLogging -bool YES`.
-    var debugLogging: Bool {
-        defaults.bool(forKey: Key.debugLogging)
+    private func persist(_ settings: AppSettings) {
+        do {
+            defaults.set(try JSONEncoder().encode(settings), forKey: Key.settings)
+        } catch {
+            // Nothing actionable: the in-memory value is still correct, the
+            // change just will not survive a restart.
+            Log.app.error(
+                "settings could not be encoded: \(String(describing: error), privacy: .public)")
+        }
     }
 }

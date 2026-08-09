@@ -101,8 +101,10 @@ final class FixEngine {
     private let queue = DispatchQueue(label: "com.ali.dodoma.fixengine", qos: .userInitiated)
     private let frontmost: FrontmostAppTracker
 
-    /// Must be created on the main thread (the tracker seeds itself there).
-    init(frontmost: FrontmostAppTracker = FrontmostAppTracker()) {
+    /// - Parameter frontmost: the app's single tracker. Deliberately without a
+    ///   default: a second tracker would mean a second activation observer and
+    ///   two caches that can disagree about when the switch happened.
+    init(frontmost: FrontmostAppTracker) {
         self.frontmost = frontmost
     }
 
