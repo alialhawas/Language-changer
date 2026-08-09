@@ -13,7 +13,9 @@ Detection and rewriting land in later milestones.
 ## Prerequisites
 
 - macOS 14 or newer
-- Xcode Command Line Tools with Swift 6 (`xcode-select --install`)
+- Swift 5.9 or newer, from the Xcode Command Line Tools (`xcode-select --install`).
+  `Package.swift` declares `swift-tools-version: 5.9`; the package is developed
+  and tested against Swift 6.2 in language mode 5.
 - No Xcode project is used; everything builds from `Package.swift` via `make`.
 
 ## One-time setup: a stable code-signing identity
@@ -75,4 +77,12 @@ restart.
 ```
 scripts/uninstall.sh   # quit, delete /Applications/Dodoma.app, reset grants
 scripts/reset-tcc.sh   # reset the two privacy grants only
+```
+
+`uninstall.sh` deliberately leaves the `Dodoma Dev` certificate, its private key
+and its trust setting in the login keychain, so that reinstalling does not
+require another `make-cert.sh` run. To remove those too:
+
+```
+security delete-identity -c "Dodoma Dev" -t "$HOME/Library/Keychains/login.keychain-db"
 ```

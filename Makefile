@@ -9,7 +9,7 @@ SIGN_IDENTITY := Dodoma Dev
 build:
 	swift build -c release
 
-bundle:
+bundle: build
 	rm -rf $(APP_BUNDLE)
 	mkdir -p $(CONTENTS)/MacOS $(CONTENTS)/Resources
 	cp "$$(swift build -c release --show-bin-path)/$(APP_NAME)" $(CONTENTS)/MacOS/$(APP_NAME)
@@ -17,7 +17,7 @@ bundle:
 	@find Resources -mindepth 1 -maxdepth 1 ! -name Info.plist -exec cp -R {} $(CONTENTS)/Resources/ \;
 	@echo "Bundled $(APP_BUNDLE)"
 
-sign:
+sign: bundle
 	@if security find-identity -v -p codesigning | grep -q "$(SIGN_IDENTITY)"; then \
 		echo "Signing with identity '$(SIGN_IDENTITY)'"; \
 		codesign --force --deep --sign "$(SIGN_IDENTITY)" $(APP_BUNDLE); \
@@ -37,6 +37,7 @@ sign:
 
 install: build bundle sign
 	pkill -x $(APP_NAME) || true
+	rm -rf /Applications/$(APP_NAME).app
 	ditto $(APP_BUNDLE) /Applications/$(APP_NAME).app
 	open /Applications/$(APP_NAME).app
 

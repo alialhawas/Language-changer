@@ -7,7 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastState: PermissionState?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.app.info("Dodoma \(Dodoma.version, privacy: .public) starting")
+        Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
 
         let controller = MenuBarController()
         menuBarController = controller

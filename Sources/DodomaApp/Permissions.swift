@@ -5,8 +5,6 @@ import IOKit.hid
 struct PermissionState: Equatable {
     var accessibility: Bool
     var inputMonitoring: Bool
-
-    var isReady: Bool { accessibility && inputMonitoring }
 }
 
 enum Permissions {
