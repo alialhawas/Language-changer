@@ -1,3 +1,4 @@
+import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import DodomaCore
@@ -8,6 +9,10 @@ enum FixError: Error, CustomStringConvertible {
     /// A command chord was in progress; rewriting under it would send the
     /// deletes to whatever the chord is doing.
     case modifierHeld
+    /// The frontmost application is no longer the one the decision was made
+    /// for. Everything the safety layer says about which apps may be rewritten
+    /// is about *that* app, so the sequence must not continue into another one.
+    case frontmostChanged
     /// The target input source is no longer enabled.
     case layoutNotFound
     /// CoreGraphics refused to make an event, which in practice means the
@@ -17,10 +22,38 @@ enum FixError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .modifierHeld: return "modifierHeld"
+        case .frontmostChanged: return "frontmostChanged"
         case .layoutNotFound: return "layoutNotFound"
         case .eventCreationFailed: return "eventCreationFailed"
         }
     }
+
+    /// True for the failures that say "not now" rather than "not ever": the
+    /// same fix is worth attempting again on the next quiet period.
+    var isTransient: Bool {
+        switch self {
+        case .modifierHeld: return true
+        case .frontmostChanged, .layoutNotFound, .eventCreationFailed: return false
+        }
+    }
+}
+
+/// How far the sequence got before it stopped.
+///
+/// The caller needs this to tell "nothing happened" from "the screen was
+/// changed": only the second case invalidates the typed buffer.
+struct FixProgress: Equatable {
+    var deletedClusters = 0
+    var insertedUTF16Units = 0
+
+    /// No event was posted, so the screen is exactly as the user left it.
+    var touchedNothing: Bool { deletedClusters == 0 && insertedUTF16Units == 0 }
+}
+
+/// A failed apply, together with how much of it had already happened.
+struct FixFailure: Error {
+    let error: FixError
+    let progress: FixProgress
 }
 
 /// The destructive half of Dodoma: deletes what the user typed, types the
@@ -69,59 +102,80 @@ final class FixEngine {
     private let queue = DispatchQueue(label: "com.ali.dodoma.fixengine", qos: .userInitiated)
 
     /// Applies `fix` and reports the outcome on the engine's own queue.
-    func apply(_ fix: Fix, completion: @escaping (Result<Void, FixError>) -> Void) {
+    ///
+    /// - Parameter bundleID: the app the decision was made for. The sequence
+    ///   refuses to type into anything else.
+    func apply(
+        _ fix: Fix,
+        in bundleID: String?,
+        completion: @escaping (Result<FixProgress, FixFailure>) -> Void
+    ) {
         queue.async {
-            completion(self.perform(fix))
+            completion(self.perform(fix, in: bundleID))
         }
     }
 
     // MARK: - The sequence
 
-    private func perform(_ fix: Fix) -> Result<Void, FixError> {
-        if let error = waitForModifiers() { return .failure(error) }
+    private func perform(_ fix: Fix, in bundleID: String?) -> Result<FixProgress, FixFailure> {
+        var progress = FixProgress()
 
+        if let error = waitForModifiers() {
+            return .failure(FixFailure(error: error, progress: progress))
+        }
+        // The decision was made up to a second ago, and the pre-flight above may
+        // have waited half a second more. A ⌘-Tab in that window would send the
+        // whole burst into an app that was never allowed to be rewritten.
+        guard isFrontmost(bundleID) else {
+            Log.fix.info("fix abandoned before it started: the frontmost app changed")
+            return .failure(FixFailure(error: .frontmostChanged, progress: progress))
+        }
         guard let source = makeSource() else {
             Log.fix.fault("could not create the injection event source; nothing was typed")
-            return .failure(.eventCreationFailed)
+            return .failure(FixFailure(error: .eventCreationFailed, progress: progress))
         }
 
-        var deleted = 0
-        while deleted < fix.deleteCount {
+        while progress.deletedClusters < fix.deleteCount {
             guard postBackspace(source: source) else {
-                return .failure(fault(.eventCreationFailed, deleted: deleted, inserted: 0, of: fix))
+                return .failure(fault(.eventCreationFailed, progress: progress, of: fix))
             }
-            deleted += 1
+            progress.deletedClusters += 1
         }
 
         Thread.sleep(forTimeInterval: Timing.postDeleteGap)
 
-        var inserted = 0
+        // Checked a second time: the burst itself takes a few hundred
+        // milliseconds, and inserting Arabic into someone else's window would
+        // be far worse than leaving our own deletion behind.
+        guard isFrontmost(bundleID) else {
+            return .failure(fault(.frontmostChanged, progress: progress, of: fix))
+        }
+
         for chunk in TextChunker.chunkUTF16(fix.insertText, max: Timing.insertChunkLimit) {
             guard postText(chunk, source: source) else {
-                return .failure(
-                    fault(.eventCreationFailed, deleted: deleted, inserted: inserted, of: fix))
+                return .failure(fault(.eventCreationFailed, progress: progress, of: fix))
             }
-            inserted += chunk.utf16.count
+            progress.insertedUTF16Units += chunk.utf16.count
         }
 
         // Only now: the text was injected as unicode, so it does not depend on
         // the active layout, but the *next* thing the user types does.
         if let error = selectInputSource(fix.targetLayoutID) {
-            return .failure(fault(error, deleted: deleted, inserted: inserted, of: fix))
+            return .failure(fault(error, progress: progress, of: fix))
         }
 
         Log.fix.info(
-            "fix applied: deleted \(deleted, privacy: .public), inserted \(inserted, privacy: .public) UTF-16 units, layout \(fix.targetLayoutID, privacy: .public)"
+            "fix applied: deleted \(progress.deletedClusters, privacy: .public), inserted \(progress.insertedUTF16Units, privacy: .public) UTF-16 units, layout \(fix.targetLayoutID, privacy: .public)"
         )
-        return .success(())
+        return .success(progress)
     }
 
     /// A half-applied edit is exactly what the log has to make visible.
-    private func fault(_ error: FixError, deleted: Int, inserted: Int, of fix: Fix) -> FixError {
+    private func fault(_ error: FixError, progress: FixProgress, of fix: Fix) -> FixFailure {
         Log.fix.fault(
-            "fix failed (\(error.description, privacy: .public)) after deleting \(deleted, privacy: .public)/\(fix.deleteCount, privacy: .public) and inserting \(inserted, privacy: .public)/\(fix.insertText.utf16.count, privacy: .public) UTF-16 units; no rollback attempted"
+            "fix failed (\(error.description, privacy: .public)) after deleting \(progress.deletedClusters, privacy: .public)/\(fix.deleteCount, privacy: .public) and inserting \(progress.insertedUTF16Units, privacy: .public)/\(fix.insertText.utf16.count, privacy: .public) UTF-16 units; no rollback attempted"
         )
-        return error
+        return FixFailure(error: error, progress: progress)
     }
 
     // MARK: - Pre-flight
@@ -141,6 +195,19 @@ final class FixEngine {
         return .modifierHeld
     }
 
+    /// Read on the main thread, both because `NSWorkspace` is happiest there
+    /// and because it is the thread the activation notifications land on, so
+    /// the answer cannot be a half-updated one. Deadlock-free for the same
+    /// reason as `selectInputSource`: nothing on the main thread waits on this
+    /// queue.
+    private func isFrontmost(_ bundleID: String?) -> Bool {
+        var current: String?
+        DispatchQueue.main.sync {
+            current = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        }
+        return current == bundleID
+    }
+
     // MARK: - Event injection
 
     /// Events carry `EventTapController.injectedEventMarker` so our own tap
@@ -151,11 +218,24 @@ final class FixEngine {
         return source
     }
 
+    /// A key event with the live modifier state stripped.
+    ///
+    /// The event source inherits whatever modifiers are physically down, and a
+    /// stale Caps Lock or Shift bit would change what the receiving app makes
+    /// of the keystroke. The flags are cleared here, at creation, so that
+    /// nothing touches the event after its unicode payload is set.
+    private func makeKeyEvent(source: CGEventSource, keycode: CGKeyCode, down: Bool) -> CGEvent? {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: keycode, keyDown: down)
+        else { return nil }
+        event.flags = []
+        return event
+    }
+
     private func postBackspace(source: CGEventSource) -> Bool {
         let keycode = CGKeyCode(Keycode.delete)
         guard
-            let down = CGEvent(keyboardEventSource: source, virtualKey: keycode, keyDown: true),
-            let up = CGEvent(keyboardEventSource: source, virtualKey: keycode, keyDown: false)
+            let down = makeKeyEvent(source: source, keycode: keycode, down: true),
+            let up = makeKeyEvent(source: source, keycode: keycode, down: false)
         else { return false }
 
         post(down, then: Timing.backspaceInterval)
@@ -166,10 +246,12 @@ final class FixEngine {
     private func postText(_ chunk: String, source: CGEventSource) -> Bool {
         var units = Array(chunk.utf16)
         guard
-            let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-            let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+            let down = makeKeyEvent(source: source, keycode: 0, down: true),
+            let up = makeKeyEvent(source: source, keycode: 0, down: false)
         else { return false }
 
+        // Last write before posting. Setting any other field afterwards is
+        // undocumented territory and has been observed to drop the payload.
         down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
         up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
 
@@ -178,11 +260,7 @@ final class FixEngine {
         return true
     }
 
-    /// Clearing the flags matters: the event source inherits the live modifier
-    /// state, and a stale Caps Lock or Shift bit would change what the
-    /// receiving app makes of the keystroke.
     private func post(_ event: CGEvent, then pause: TimeInterval) {
-        event.flags = []
         event.post(tap: .cghidEventTap)
         Thread.sleep(forTimeInterval: pause)
     }

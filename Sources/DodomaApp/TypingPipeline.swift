@@ -10,10 +10,10 @@ import Foundation
 /// publishing snapshots. All state-machine and detection behaviour lives in
 /// `DodomaCore`, which is unit tested directly.
 final class TypingPipeline {
-    /// How long our own injected keystrokes are ignored after a fix completes.
-    /// The tap already filters them by marker; this is the belt-and-braces
-    /// second line, and it also swallows the input-source notification the
-    /// switch itself provokes.
+    /// How long typed input is ignored after a fix completes. The tap already
+    /// filters our own events by marker; this is the belt-and-braces second
+    /// line, covering the tail of an injection that is still draining through
+    /// the event system when the engine reports back.
     private static let applyTailWindow: TimeInterval = 0.3
 
     let queue = DispatchQueue(label: "com.ali.dodoma.pipeline", qos: .userInitiated)
@@ -111,6 +111,10 @@ final class TypingPipeline {
             self.enabledSourcesObserver = nil
         }
         queue.async { [weak self] in
+            // Clearing the flag as well as the timer: a tap event already
+            // queued behind this block could otherwise arm a trigger that
+            // fires a second into shutdown.
+            self?.captureActive = false
             self?.cancelTrigger()
         }
     }
@@ -210,11 +214,22 @@ final class TypingPipeline {
         dispatchPrecondition(condition: .onQueue(queue))
         pendingEvaluation = nil
         guard captureActive, !isApplying else { return }
+        guard let last = session.lastKeyTime else { return }
+
         // A key may have landed between the last arming and this block being
-        // dequeued; the timestamp is the authority, not the timer.
-        guard let last = session.lastKeyTime,
-              TypingSession.isEvaluationDue(lastKeyTimestamp: last, now: Self.now())
-        else { return }
+        // dequeued; the timestamp is the authority, not the timer. Re-schedule
+        // for the remainder rather than dropping the evaluation, so the buffer
+        // cannot end up permanently un-evaluated.
+        let now = Self.now()
+        guard TypingSession.isEvaluationDue(lastKeyTimestamp: last, now: now) else {
+            let remaining = TypingSession.triggerDelay - (now - last)
+            let work = DispatchWorkItem { [weak self] in
+                self?.triggerFired()
+            }
+            pendingEvaluation = work
+            queue.asyncAfter(deadline: .now() + max(remaining, 0.001), execute: work)
+            return
+        }
         evaluate()
     }
 
@@ -272,13 +287,15 @@ final class TypingPipeline {
     /// category, and only when the user opted in.
     private func logDecision(_ snapshot: DecisionSnapshot) {
         guard settings.debugLogging else {
-            Log.decision.debug(
+            Log.decision.info(
                 "\(snapshot.verdict, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
             )
             return
         }
-        Log.decision.debug(
-            "\(snapshot.verdict, privacy: .public) region=\(snapshot.regionText) cur=\(snapshot.currentScore, format: .fixed(precision: 2), privacy: .public) alt=\(snapshot.alternateScore, format: .fixed(precision: 2), privacy: .public) guards=\(snapshot.guards, privacy: .public) reason=\(snapshot.reason, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
+        // The one interpolation in the project that is deliberately public:
+        // redacting it would make the opt-in flag pointless.
+        Log.decision.info(
+            "\(snapshot.verdict, privacy: .public) region=\(snapshot.regionText, privacy: .public) cur=\(snapshot.currentScore, format: .fixed(precision: 2), privacy: .public) alt=\(snapshot.alternateScore, format: .fixed(precision: 2), privacy: .public) guards=\(snapshot.guards, privacy: .public) reason=\(snapshot.reason, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
         )
     }
 
@@ -296,7 +313,7 @@ final class TypingPipeline {
             "auto-applying: delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
         )
 
-        fixEngine.apply(fix) { [weak self] result in
+        fixEngine.apply(fix, in: bundleID) { [weak self] result in
             guard let self else { return }
             self.queue.async {
                 self.finishApply(fix, bundleID: bundleID, result: result)
@@ -305,29 +322,46 @@ final class TypingPipeline {
     }
 
     private func finishApply(
-        _ fix: Fix, bundleID: String?, result: Result<Void, FixError>
+        _ fix: Fix, bundleID: String?, result: Result<FixProgress, FixFailure>
     ) {
         dispatchPrecondition(condition: .onQueue(queue))
 
-        // What is on screen is no longer what the user typed, whether the
-        // sequence finished or died halfway. Either way the key history is
-        // worthless and must never be evaluated again.
-        let snapshot = session.reset(reason: .manual, at: Self.now())
-        onChange?(snapshot)
-
+        let progress: FixProgress
+        var retryable = false
         switch result {
-        case .success:
+        case .success(let succeeded):
+            progress = succeeded
             let applied = AppliedFix(fix: fix, appliedAt: Date(), bundleID: bundleID)
             lastAppliedFix = applied
             lastDecision?.result = "applied"
             onAutoApply?(applied)
-        case .failure(let error):
-            lastDecision?.result = "failed: \(error.description)"
+        case .failure(let failure):
+            progress = failure.progress
+            retryable = failure.error.isTransient && progress.touchedNothing
+            lastDecision?.result = "failed: \(failure.error.description)"
         }
         if let lastDecision { onDecision?(lastDecision) }
 
+        // Only a sequence that reached the screen invalidates the buffer. An
+        // apply that was abandoned before its first event — a held modifier, a
+        // ⌘-Tab — leaves the text exactly as the user typed it, and throwing
+        // the keys away there would silently cost them a valid fix.
+        if progress.touchedNothing {
+            Log.fix.debug("nothing was typed, so the buffer is kept as it is")
+        } else {
+            let snapshot = session.reset(reason: .manual, at: Self.now())
+            onChange?(snapshot)
+        }
+
         queue.asyncAfter(deadline: .now() + Self.applyTailWindow) { [weak self] in
-            self?.isApplying = false
+            guard let self else { return }
+            self.isApplying = false
+            // The buffer still matches the screen and the obstacle was a
+            // passing one, so let the next quiet period try again. Each round
+            // costs a full trigger delay plus the modifier pre-flight, so a
+            // modifier held down indefinitely retries about every two seconds
+            // rather than spinning.
+            if retryable, !self.session.isBufferEmpty { self.armTrigger() }
         }
     }
 

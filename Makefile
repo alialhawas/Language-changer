@@ -68,8 +68,10 @@ fixtures:
 eval:
 	swift run Dodoma --eval $(CORPUS)
 
+# --debug --info: the decision and pipeline categories log at those levels, and
+# `log stream` shows neither by default.
 logs:
-	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --style compact
+	log stream --debug --info --predicate 'subsystem == "$(BUNDLE_ID)"' --style compact
 
 # Regenerates the committed language models. The only network access in the
 # project, and it only happens on a dev machine when Tools/data/ is cold.

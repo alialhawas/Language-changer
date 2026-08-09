@@ -83,20 +83,9 @@ final class MenuBarController {
     static func lastFixText(replaced: String, inserted: String, app: String, at date: Date)
         -> String
     {
-        let field = { middleTruncate($0, limit: fieldLimit) }
+        let field = { TextDisplay.middleTruncate($0, limit: fieldLimit) }
         return "Last fix: \(field(replaced)) → \(field(inserted)) "
             + "(\(field(app))) \(timeFormatter.string(from: date))"
-    }
-
-    /// Keeps both ends of the text, which is what makes two similar fixes
-    /// distinguishable in the menu.
-    static func middleTruncate(_ text: String, limit: Int) -> String {
-        let flattened = text.replacingOccurrences(of: "\n", with: " ")
-        guard flattened.count > limit, limit > 1 else { return flattened }
-        let kept = limit - 1
-        let tail = kept / 2
-        let head = kept - tail
-        return "\(flattened.prefix(head))…\(flattened.suffix(tail))"
     }
 
     private func flash(_ title: String) {
