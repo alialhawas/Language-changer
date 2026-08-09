@@ -1,4 +1,3 @@
-import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import DodomaCore
@@ -100,6 +99,12 @@ final class FixEngine {
     ]
 
     private let queue = DispatchQueue(label: "com.ali.dodoma.fixengine", qos: .userInitiated)
+    private let frontmost: FrontmostAppTracker
+
+    /// Must be created on the main thread (the tracker seeds itself there).
+    init(frontmost: FrontmostAppTracker = FrontmostAppTracker()) {
+        self.frontmost = frontmost
+    }
 
     /// Applies `fix` and reports the outcome on the engine's own queue.
     ///
@@ -126,7 +131,7 @@ final class FixEngine {
         // The decision was made up to a second ago, and the pre-flight above may
         // have waited half a second more. A ⌘-Tab in that window would send the
         // whole burst into an app that was never allowed to be rewritten.
-        guard isFrontmost(bundleID) else {
+        guard frontmost.currentBundleID() == bundleID else {
             Log.fix.info("fix abandoned before it started: the frontmost app changed")
             return .failure(FixFailure(error: .frontmostChanged, progress: progress))
         }
@@ -135,7 +140,13 @@ final class FixEngine {
             return .failure(FixFailure(error: .eventCreationFailed, progress: progress))
         }
 
+        // Re-checked before *every* destructive event, not just before the
+        // loop: 23 clusters is nearly half a second of backspaces, and each one
+        // that lands in the wrong window deletes somebody's text.
         while progress.deletedClusters < fix.deleteCount {
+            guard frontmost.bundleID == bundleID else {
+                return .failure(fault(.frontmostChanged, progress: progress, of: fix))
+            }
             guard postBackspace(source: source) else {
                 return .failure(fault(.eventCreationFailed, progress: progress, of: fix))
             }
@@ -144,14 +155,16 @@ final class FixEngine {
 
         Thread.sleep(forTimeInterval: Timing.postDeleteGap)
 
-        // Checked a second time: the burst itself takes a few hundred
-        // milliseconds, and inserting Arabic into someone else's window would
-        // be far worse than leaving our own deletion behind.
-        guard isFrontmost(bundleID) else {
+        // Authoritative check at the checkpoint between the two halves:
+        // inserting Arabic into someone else's window would be worse still.
+        guard frontmost.currentBundleID() == bundleID else {
             return .failure(fault(.frontmostChanged, progress: progress, of: fix))
         }
 
         for chunk in TextChunker.chunkUTF16(fix.insertText, max: Timing.insertChunkLimit) {
+            guard frontmost.bundleID == bundleID else {
+                return .failure(fault(.frontmostChanged, progress: progress, of: fix))
+            }
             guard postText(chunk, source: source) else {
                 return .failure(fault(.eventCreationFailed, progress: progress, of: fix))
             }
@@ -193,19 +206,6 @@ final class FixEngine {
         }
         Log.fix.info("fix abandoned: a modifier stayed down through every retry")
         return .modifierHeld
-    }
-
-    /// Read on the main thread, both because `NSWorkspace` is happiest there
-    /// and because it is the thread the activation notifications land on, so
-    /// the answer cannot be a half-updated one. Deadlock-free for the same
-    /// reason as `selectInputSource`: nothing on the main thread waits on this
-    /// queue.
-    private func isFrontmost(_ bundleID: String?) -> Bool {
-        var current: String?
-        DispatchQueue.main.sync {
-            current = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        }
-        return current == bundleID
     }
 
     // MARK: - Event injection

@@ -39,6 +39,10 @@ final class TypingPipeline {
     /// Queue-confined state.
     private var pendingEvaluation: DispatchWorkItem?
     private var isApplying = false
+    /// Set when real input was discarded because a fix was in flight. Those
+    /// keystrokes reached the screen but not the buffer, so the buffer no
+    /// longer describes the text in front of the caret.
+    private var droppedInputDuringApply = false
     private var captureActive = false
     private var lastDecision: DecisionSnapshot?
     /// The single history slot M7 grows into `FixHistory`. Queue-confined.
@@ -154,6 +158,7 @@ final class TypingPipeline {
             // Either our own injection came back despite the marker filter, or
             // the user typed into the middle of a rewrite. Both would corrupt
             // the buffer relative to what is on screen.
+            droppedInputDuringApply = true
             Log.fix.debug("input dropped while a fix was being applied")
             return
         }
@@ -308,6 +313,7 @@ final class TypingPipeline {
 
     private func beginApply(_ fix: Fix, bundleID: String?) {
         isApplying = true
+        droppedInputDuringApply = false
         cancelTrigger()
         Log.fix.info(
             "auto-applying: delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
@@ -327,7 +333,7 @@ final class TypingPipeline {
         dispatchPrecondition(condition: .onQueue(queue))
 
         let progress: FixProgress
-        var retryable = false
+        var transientFailure = false
         switch result {
         case .success(let succeeded):
             progress = succeeded
@@ -337,32 +343,49 @@ final class TypingPipeline {
             onAutoApply?(applied)
         case .failure(let failure):
             progress = failure.progress
-            retryable = failure.error.isTransient && progress.touchedNothing
+            transientFailure = failure.error.isTransient
             lastDecision?.result = "failed: \(failure.error.description)"
         }
         if let lastDecision { onDecision?(lastDecision) }
 
-        // Only a sequence that reached the screen invalidates the buffer. An
-        // apply that was abandoned before its first event — a held modifier, a
-        // ⌘-Tab — leaves the text exactly as the user typed it, and throwing
-        // the keys away there would silently cost them a valid fix.
-        if progress.touchedNothing {
-            Log.fix.debug("nothing was typed, so the buffer is kept as it is")
+        let aftermath = ApplyAftermath.decide(
+            touchedNothing: progress.touchedNothing,
+            droppedInput: droppedInputDuringApply,
+            transientFailure: transientFailure,
+            bufferEmpty: session.isBufferEmpty)
+
+        if aftermath.resetBuffer {
+            resetAfterApply()
         } else {
-            let snapshot = session.reset(reason: .manual, at: Self.now())
-            onChange?(snapshot)
+            // Nothing was posted and nothing was swallowed, so the buffer still
+            // describes the screen exactly. Throwing it away here would cost
+            // the user a valid fix for no reason.
+            Log.fix.debug("nothing was typed, so the buffer is kept as it is")
         }
 
         queue.asyncAfter(deadline: .now() + Self.applyTailWindow) { [weak self] in
             guard let self else { return }
             self.isApplying = false
-            // The buffer still matches the screen and the obstacle was a
-            // passing one, so let the next quiet period try again. Each round
-            // costs a full trigger delay plus the modifier pre-flight, so a
-            // modifier held down indefinitely retries about every two seconds
-            // rather than spinning.
-            if retryable, !self.session.isBufferEmpty { self.armTrigger() }
+
+            if self.droppedInputDuringApply, !self.session.isBufferEmpty {
+                // Input arrived during the tail window, after the decision
+                // above was taken. Same reasoning, one beat later.
+                self.resetAfterApply()
+            } else if aftermath.rearmTrigger, !self.session.isBufferEmpty {
+                // The obstacle was a passing one, so let the next quiet period
+                // try again. Each round costs a full trigger delay plus the
+                // modifier pre-flight, so a modifier held down indefinitely
+                // retries about every two seconds rather than spinning.
+                self.armTrigger()
+            }
+            self.droppedInputDuringApply = false
         }
+    }
+
+    /// The buffer no longer describes what is in front of the caret.
+    private func resetAfterApply() {
+        let snapshot = session.reset(reason: .manual, at: Self.now())
+        onChange?(snapshot)
     }
 
     private static func now() -> TimeInterval {
