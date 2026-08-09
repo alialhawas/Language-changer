@@ -4,6 +4,9 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let statusLineItem: NSMenuItem
 
+    /// Invoked when the user picks "Debug Window".
+    var onShowDebugWindow: (() -> Void)?
+
     private static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private static let inputMonitoringSettingsURL = URL(
@@ -26,14 +29,14 @@ final class MenuBarController {
         statusItem.menu = makeMenu()
     }
 
-    func update(with state: PermissionState) {
-        statusLineItem.title = Self.statusText(for: state)
+    func update(with state: PermissionState, capturing: Bool) {
+        statusLineItem.title = Self.statusText(for: state, capturing: capturing)
     }
 
-    private static func statusText(for state: PermissionState) -> String {
+    private static func statusText(for state: PermissionState, capturing: Bool) -> String {
         if !state.accessibility { return "Needs Accessibility permission" }
         if !state.inputMonitoring { return "Needs Input Monitoring permission" }
-        return "Active"
+        return capturing ? "Active (capturing)" : "Active"
     }
 
     private func makeMenu() -> NSMenu {
@@ -57,6 +60,14 @@ final class MenuBarController {
 
         menu.addItem(.separator())
 
+        let debugItem = NSMenuItem(title: "Debug Window",
+                                   action: #selector(showDebugWindow),
+                                   keyEquivalent: "")
+        debugItem.target = self
+        menu.addItem(debugItem)
+
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit Dodoma",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
@@ -72,6 +83,10 @@ final class MenuBarController {
 
     @objc private func openInputMonitoringSettings() {
         NSWorkspace.shared.open(Self.inputMonitoringSettingsURL)
+    }
+
+    @objc private func showDebugWindow() {
+        onShowDebugWindow?()
     }
 
     @objc private func quit() {
