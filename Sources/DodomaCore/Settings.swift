@@ -115,6 +115,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
         return migrated
     }
 
+    /// True when a stored blob exists but cannot be read at all.
+    ///
+    /// `load` deliberately falls back to the defaults in that case, and the
+    /// defaults are *permissive*: `defaultPolicy` is `.normal` and `paused` is
+    /// false. Silently writing those back over an unreadable file would revert
+    /// every application the user had switched off and un-pause the app, with
+    /// no way to get any of it back. The caller must keep a copy of the
+    /// original bytes before it persists the fallback.
+    public static func isUnreadable(_ storedJSON: Data?) -> Bool {
+        guard let storedJSON else { return false }
+        return (try? JSONDecoder().decode(AppSettings.self, from: storedJSON)) == nil
+    }
+
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {

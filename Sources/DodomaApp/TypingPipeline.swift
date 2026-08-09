@@ -51,9 +51,10 @@ final class TypingPipeline {
     /// written to the screen yet, so input arriving in this window is real
     /// input and must be buffered, not dropped — it just invalidates the fix.
     private var isGating = false
-    /// Bumped by every input. A fix decided at one value and resolved at
-    /// another describes text that has since moved.
-    private var inputSerial: UInt64 = 0
+    /// Bumped by every input. Work decided at one value and carried out at
+    /// another is work about text that has since moved. Lock-protected rather
+    /// than queue-confined because the injector reads it from its own queue.
+    private let inputs = InputSerial()
     /// Set when real input was discarded because a fix was in flight. Those
     /// keystrokes reached the screen but not the buffer, so the buffer no
     /// longer describes the text in front of the caret.
@@ -200,7 +201,7 @@ final class TypingPipeline {
         Log.pipeline.info("capture suspended: \(description, privacy: .public)")
         cancelTrigger()
         // A gate resolving after this must not act on a decision taken before.
-        inputSerial &+= 1
+        inputs.bump()
         resetBuffer(reason: reason)
     }
 
@@ -225,7 +226,10 @@ final class TypingPipeline {
     private func process(_ input: SessionInput) {
         dispatchPrecondition(condition: .onQueue(queue))
 
-        inputSerial &+= 1
+        // Before every early return below: input the pipeline chose not to
+        // buffer still reached the screen, and that is exactly what the
+        // in-flight work needs to know about.
+        inputs.bump()
 
         if isSuppressed, Self.isTypingSignal(input) {
             // Not "ignored": never seen. While the pause is on, secure input is
@@ -334,13 +338,14 @@ final class TypingPipeline {
         let bundleID = session.currentFrontmostBundleID
         let now = Self.now()
 
-        // Steps (a) to (c) of the safety order. `secureInput.isEnabled` is
-        // re-read here rather than trusting the cached flag: the poll is a
-        // second wide and this is one function call.
+        // Steps (a) to (c) of the safety order. The secure-input flag is read
+        // from the system here rather than from the monitor's cache: the poll
+        // is a second wide, and finishing a password and pausing is precisely
+        // how you land inside that second.
         let resolved = settings.policy(for: bundleID)
         let preflight = SafetyGate.preflight(
             paused: paused,
-            secureInputEnabled: secureInputActive || secureInput.isEnabled,
+            secureInputEnabled: secureInputActive || secureInput.readNow(),
             policy: resolved)
 
         let policy: AppPolicy
@@ -375,11 +380,12 @@ final class TypingPipeline {
         let snapshot = DecisionSnapshot(
             detection: detection, policy: policy, bundleID: bundleID, duration: duration,
             evaluatedAt: now)
-        publish(snapshot)
-        logDecision(snapshot)
 
-        guard detection.decision.fix != nil else { return }
-        beginGate(for: detection.decision, bundleID: bundleID)
+        // Deliberately not published or logged yet. The snapshot carries the
+        // region — the user's own text — and the focused field has not been
+        // checked. In a password field that text is a password, and §6(c) says
+        // nothing is shown. `resolveGate` publishes it, or does not.
+        beginGate(for: detection.decision, snapshot: snapshot, policy: policy, bundleID: bundleID)
     }
 
     /// Region text is typed text. It only ever reaches os_log through this
@@ -406,37 +412,48 @@ final class TypingPipeline {
     // MARK: - The accessibility gate
 
     /// Steps (c) and (d): ask the accessibility API about the focused element,
-    /// off this queue, before anything is shown or deleted.
+    /// off this queue, before anything is shown, logged or deleted.
+    ///
+    /// This runs on *every* evaluation that had something in the buffer, not
+    /// only on the ones that produced a fix. A password is not wrong-layout
+    /// text, so it produces no fix — and gating the secure-field check on a fix
+    /// existing would mean a password field that does not raise the secure
+    /// event input flag is never noticed at all, and the buffer just keeps
+    /// growing. `SafetyGate.inspection` owns that rule.
     ///
     /// The auto path asks for the caret text in the same round trip as the
     /// secure-field check — one focused-element read serves both, and the two
     /// answers then fail in opposite directions as `SafetyGate` documents.
-    private func beginGate(for decision: Decision, bundleID: String?) {
+    private func beginGate(
+        for decision: Decision, snapshot: DecisionSnapshot, policy: AppPolicy, bundleID: String?
+    ) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard let fix = decision.fix, !isGating, !isApplying else { return }
+        guard !isGating, !isApplying else { return }
 
         isGating = true
         cancelTrigger()
-        let serial = inputSerial
-        let verifying = decision.isAuto && !settings.skipsAXVerify(bundleID)
+        let serial = inputs.current
+        let inspection = SafetyGate.inspection(
+            for: decision, skipVerify: settings.skipsAXVerify(bundleID))
 
         focusOracle.inspect(
             pid: frontmost.current.processIdentifier,
-            caretTextLength: verifying ? fix.replacedText.utf16.count : nil
-        ) { [weak self] inspection in
+            caretTextLength: inspection.caretTextLength
+        ) { [weak self] focus in
             guard let self else { return }
             self.queue.async {
                 self.resolveGate(
-                    inspection, decision: decision, fix: fix, bundleID: bundleID,
-                    verified: verifying, serial: serial)
+                    focus, decision: decision, snapshot: snapshot, policy: policy,
+                    bundleID: bundleID, verified: inspection.caretTextLength != nil, serial: serial)
             }
         }
     }
 
     private func resolveGate(
-        _ inspection: FocusInspection,
+        _ focus: FocusInspection,
         decision: Decision,
-        fix: Fix,
+        snapshot: DecisionSnapshot,
+        policy: AppPolicy,
         bundleID: String?,
         verified: Bool,
         serial: UInt64
@@ -445,36 +462,50 @@ final class TypingPipeline {
         guard isGating else { return }
         isGating = false
 
-        guard serial == inputSerial else {
+        guard !inputs.hasMoved(since: serial) else {
             // Something happened while we were asking — a keystroke, a click,
-            // an app switch. The fix is measured from a caret that has moved.
-            Log.pipeline.debug("fix abandoned: input arrived during the accessibility check")
+            // an app switch. The decision is about text that has since moved,
+            // and publishing it would show a region that is no longer there.
+            Log.pipeline.debug("evaluation abandoned: input arrived during the accessibility check")
             if !session.isBufferEmpty { armTrigger() }
             return
         }
 
         let verification =
             verified
-            ? CaretVerification.verdict(axText: inspection.caretText, replacedText: fix.replacedText)
+            ? CaretVerification.verdict(
+                axText: focus.caretText, replacedText: decision.fix?.replacedText ?? "")
             : .proceed
 
-        switch SafetyGate.resolve(
-            decision: decision, secureField: inspection.security, verification: verification)
-        {
-        case .drop(let reason):
-            Log.pipeline.info("buffer dropped: \(reason, privacy: .public)")
-            lastDecision?.result = "dropped: \(reason)"
-            if let lastDecision { onDecision?(lastDecision) }
-            resetBuffer(reason: .secureInput)
+        let resolution = SafetyGate.resolve(
+            decision: decision, secureField: focus.security, verification: verification)
 
-        case .suggest(let downgradedFrom):
-            if let downgradedFrom {
-                Log.fix.info(
-                    "auto-apply downgraded to a suggestion: \(downgradedFrom, privacy: .public)")
-                lastDecision?.verdict = "suggest"
-                lastDecision?.result = "downgraded: \(downgradedFrom)"
-                if let lastDecision { onDecision?(lastDecision) }
-            }
+        guard resolution.mayPublishRegion else {
+            guard case .drop(let reason) = resolution else { return }
+            // Everything about the evaluation is withheld: only that it was
+            // skipped, and why. No region, no scores, no `decision` log line.
+            Log.pipeline.info("buffer dropped: \(reason, privacy: .public)")
+            publish(
+                .skipped(
+                    reason: reason, policy: policy, bundleID: bundleID,
+                    evaluatedAt: snapshot.evaluatedAt))
+            resetBuffer(reason: .secureInput)
+            return
+        }
+
+        var published = snapshot
+        if case .suggest(let downgradedFrom) = resolution, let downgradedFrom {
+            Log.fix.info(
+                "auto-apply downgraded to a suggestion: \(downgradedFrom, privacy: .public)")
+            published.verdict = "suggest"
+            published.result = "downgraded: \(downgradedFrom)"
+        }
+        publish(published)
+        logDecision(published)
+
+        guard let fix = decision.fix else { return }
+        switch resolution {
+        case .suggest:
             // M6 shows a panel here; for now the status item just blinks.
             Log.pipeline.info(
                 "suggestion available: delete \(fix.deleteCount, privacy: .public) clusters (no panel until M6)"
@@ -482,16 +513,20 @@ final class TypingPipeline {
             onSuggest?(fix)
 
         case .autoApply:
-            beginApply(fix, bundleID: bundleID)
+            beginApply(fix, bundleID: bundleID, verifiedAt: serial)
 
-        case .nothing:
+        case .drop, .nothing:
             break
         }
     }
 
     // MARK: - Applying
 
-    private func beginApply(_ fix: Fix, bundleID: String?) {
+    /// - Parameter verifiedAt: the input serial the caret verification was
+    ///   taken at. The injector re-checks it after its modifier pre-flight,
+    ///   which is the only part of the sequence long enough for the screen to
+    ///   have changed since.
+    private func beginApply(_ fix: Fix, bundleID: String?, verifiedAt: UInt64) {
         isApplying = true
         droppedInputDuringApply = false
         cancelTrigger()
@@ -499,7 +534,12 @@ final class TypingPipeline {
             "auto-applying: delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
         )
 
-        fixEngine.apply(fix, in: bundleID) { [weak self] result in
+        let inputs = self.inputs
+        fixEngine.apply(
+            fix,
+            in: bundleID,
+            isStale: { inputs.hasMoved(since: verifiedAt) }
+        ) { [weak self] result in
             guard let self else { return }
             self.queue.async {
                 self.finishApply(fix, bundleID: bundleID, result: result)

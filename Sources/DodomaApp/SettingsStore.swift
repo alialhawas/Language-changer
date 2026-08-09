@@ -14,6 +14,9 @@ import Foundation
 final class SettingsStore {
     enum Key {
         static let settings = "settings"
+        /// Where an unreadable `settings` blob is kept, so that restoring the
+        /// defaults over it is recoverable by hand.
+        static let corruptSettings = "settings.corrupt"
         /// Written by builds before the blob existed; read once, at migration.
         static let legacyAggressiveness = "aggressiveness"
         /// Still honoured as a live override so that the documented
@@ -39,11 +42,23 @@ final class SettingsStore {
     ///   same plist. Either way the settings land in one place.
     init(defaults: UserDefaults = UserDefaults(suiteName: "com.ali.dodoma") ?? .standard) {
         self.defaults = defaults
+        let stored = defaults.data(forKey: Key.settings)
         let loaded = AppSettings.load(
-            storedJSON: defaults.data(forKey: Key.settings),
+            storedJSON: stored,
             legacyAggressiveness: defaults.string(forKey: Key.legacyAggressiveness),
             legacyDebugLogging: defaults.bool(forKey: Key.debugLogging))
         cached = loaded
+
+        // The fallback is the *permissive* default — every app Normal, not
+        // paused — so overwriting an unreadable blob with it would quietly
+        // switch Dodoma back on everywhere the user had switched it off, and
+        // leave nothing to restore from. Keep the bytes first.
+        if let stored, AppSettings.isUnreadable(stored) {
+            defaults.set(stored, forKey: Key.corruptSettings)
+            Log.app.fault(
+                "the settings blob could not be read; the defaults were restored and the original was kept under the \(Key.corruptSettings, privacy: .public) key"
+            )
+        }
         // Writing the merged result straight back is what makes the seed merge
         // durable: a policy added by this release is on disk before the user
         // touches anything, so a later release can tell "never seen" from

@@ -17,6 +17,9 @@ enum FixError: Error, CustomStringConvertible {
     /// CoreGraphics refused to make an event, which in practice means the
     /// Accessibility grant went away mid-sequence.
     case eventCreationFailed
+    /// Input arrived after the caret was verified, so the verification no
+    /// longer describes the screen the burst is about to delete from.
+    case inputSinceVerification
 
     var description: String {
         switch self {
@@ -24,6 +27,7 @@ enum FixError: Error, CustomStringConvertible {
         case .frontmostChanged: return "frontmostChanged"
         case .layoutNotFound: return "layoutNotFound"
         case .eventCreationFailed: return "eventCreationFailed"
+        case .inputSinceVerification: return "inputSinceVerification"
         }
     }
 
@@ -31,7 +35,7 @@ enum FixError: Error, CustomStringConvertible {
     /// same fix is worth attempting again on the next quiet period.
     var isTransient: Bool {
         switch self {
-        case .modifierHeld: return true
+        case .modifierHeld, .inputSinceVerification: return true
         case .frontmostChanged, .layoutNotFound, .eventCreationFailed: return false
         }
     }
@@ -110,25 +114,44 @@ final class FixEngine {
 
     /// Applies `fix` and reports the outcome on the engine's own queue.
     ///
-    /// - Parameter bundleID: the app the decision was made for. The sequence
-    ///   refuses to type into anything else.
+    /// - Parameters:
+    ///   - bundleID: the app the decision was made for. The sequence refuses to
+    ///     type into anything else.
+    ///   - isStale: asked once, after the modifier pre-flight and before the
+    ///     first destructive event. True means the caller's verification of the
+    ///     text in front of the caret no longer holds. Called on the engine's
+    ///     queue, so it must be safe to call off the caller's own queue.
     func apply(
         _ fix: Fix,
         in bundleID: String?,
+        isStale: @escaping () -> Bool = { false },
         completion: @escaping (Result<FixProgress, FixFailure>) -> Void
     ) {
         queue.async {
-            completion(self.perform(fix, in: bundleID))
+            completion(self.perform(fix, in: bundleID, isStale: isStale))
         }
     }
 
     // MARK: - The sequence
 
-    private func perform(_ fix: Fix, in bundleID: String?) -> Result<FixProgress, FixFailure> {
+    private func perform(
+        _ fix: Fix, in bundleID: String?, isStale: () -> Bool
+    ) -> Result<FixProgress, FixFailure> {
         var progress = FixProgress()
 
         if let error = waitForModifiers() {
             return .failure(FixFailure(error: error, progress: progress))
+        }
+        // The caret was verified *before* the pre-flight above, which waits up
+        // to 450 ms for a modifier to come up. Everything the user typed in
+        // that window reached the screen but not the verification — the buffer
+        // did not even see it, because the pipeline drops input while a fix is
+        // in flight — so the span the burst is about to delete is no longer the
+        // span that was checked. Nothing has been posted yet, so abandoning
+        // here is free.
+        if isStale() {
+            Log.fix.info("fix abandoned: input arrived after the caret was verified")
+            return .failure(FixFailure(error: .inputSinceVerification, progress: progress))
         }
         // The decision was made up to a second ago, and the pre-flight above may
         // have waited half a second more. A ⌘-Tab in that window would send the

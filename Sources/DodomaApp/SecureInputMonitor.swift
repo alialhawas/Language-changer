@@ -24,11 +24,26 @@ final class SecureInputMonitor {
     /// Called on the main thread whenever the flag changes.
     var onChange: ((Bool) -> Void)?
 
-    /// Readable from any thread; the pipeline reads it on its own queue.
+    /// The last polled value. Up to `pollInterval` stale, which is fine for the
+    /// menu and for suppressing capture, and not fine for the evaluation —
+    /// see `readNow()`. Readable from any thread.
     var isEnabled: Bool {
         lock.lock()
         defer { lock.unlock() }
         return enabled
+    }
+
+    /// Asks the system, now, bypassing the poll's cache.
+    ///
+    /// The evaluation needs this rather than `isEnabled`: the poll runs once a
+    /// second and the flag can have gone up at any point inside that second,
+    /// which is exactly the window in which a user finishes typing a password
+    /// and stops. It is one function call, on the pipeline queue, and it
+    /// deliberately does not touch the cached value — ownership of that, and of
+    /// the change notification the menu depends on, stays with `refresh()` on
+    /// the main thread.
+    func readNow() -> Bool {
+        IsSecureEventInputEnabled()
     }
 
     /// Main thread only.
@@ -54,7 +69,7 @@ final class SecureInputMonitor {
     @discardableResult
     func refresh() -> Bool {
         assert(Thread.isMainThread)
-        let now = IsSecureEventInputEnabled()
+        let now = readNow()
 
         lock.lock()
         let changed = now != enabled

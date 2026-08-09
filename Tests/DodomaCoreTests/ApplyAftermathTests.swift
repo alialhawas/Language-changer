@@ -87,6 +87,24 @@ final class ApplyAftermathTests: XCTestCase {
         XCTAssertFalse(result.rearmTrigger)
     }
 
+    /// The injector's staleness abort. It fires before any event is posted, so
+    /// `touchedNothing` is true and the failure is transient — but if what
+    /// invalidated the verification was a keystroke, that keystroke reached the
+    /// screen while the pipeline was deaf, so the buffer still has to go.
+    func testAnAbortAfterTheCaretWentStaleResetsWhenTheStalenessWasTyping() {
+        let typed = decide(
+            touchedNothing: true, droppedInput: true, transientFailure: true, bufferEmpty: false)
+        XCTAssertTrue(typed.resetBuffer)
+        XCTAssertFalse(typed.rearmTrigger)
+
+        // Whereas an app switch moves the serial without ever reaching the
+        // buffer, so the same fix is worth another quiet period.
+        let switched = decide(
+            touchedNothing: true, droppedInput: false, transientFailure: true, bufferEmpty: false)
+        XCTAssertFalse(switched.resetBuffer)
+        XCTAssertTrue(switched.rearmTrigger)
+    }
+
     func testAPermanentFailureKeepsTheBufferButDoesNotSpinOnIt() {
         // A dead event source: nothing was typed, but retrying would only
         // produce the same fault a second later.

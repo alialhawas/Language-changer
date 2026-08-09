@@ -54,6 +54,44 @@ public enum SafetyGate {
         case autoApply
         /// The detector found nothing worth doing.
         case nothing
+
+        /// Whether the evaluation may be shown in the debug window and logged.
+        ///
+        /// A drop must show *nothing*. The published snapshot carries the
+        /// region — the user's own text — and in a secure field that text is a
+        /// password, so the whole evaluation is withheld until the focused
+        /// field is known not to be one. This is why nothing is published
+        /// before the gate resolves.
+        public var mayPublishRegion: Bool {
+            if case .drop = self { return false }
+            return true
+        }
+    }
+
+    /// What the accessibility layer has to be asked, for a given decision.
+    public struct Inspection: Equatable, Sendable {
+        /// Always true. The focused field is checked on *every* evaluation with
+        /// something in the buffer, not only when the detector produced a fix:
+        /// a password rarely reads as wrong-layout text, so gating the check on
+        /// a fix existing would mean a password field with no secure event
+        /// input is never noticed and the buffer simply accumulates.
+        public let checksSecureField: Bool
+        /// UTF-16 units of caret text to read back, or nil to skip the read.
+        /// Only the auto path pays for it: it is the only path that deletes.
+        public let caretTextLength: Int?
+
+        public init(checksSecureField: Bool, caretTextLength: Int?) {
+            self.checksSecureField = checksSecureField
+            self.caretTextLength = caretTextLength
+        }
+    }
+
+    /// - Parameter skipVerify: the app is in `axVerifySkip`.
+    public static func inspection(for decision: Decision, skipVerify: Bool = false) -> Inspection {
+        guard decision.isAuto, !skipVerify, let fix = decision.fix else {
+            return Inspection(checksSecureField: true, caretTextLength: nil)
+        }
+        return Inspection(checksSecureField: true, caretTextLength: fix.replacedText.utf16.count)
     }
 
     /// Steps (a)–(c) of the evaluation order: global pause, then the frontmost

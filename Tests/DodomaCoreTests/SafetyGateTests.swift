@@ -112,6 +112,68 @@ final class SafetyGateTests: XCTestCase {
             .nothing)
     }
 
+    // MARK: - What has to be asked of the accessibility API
+
+    /// The widening that makes the secure-field check useful: it runs on every
+    /// evaluation with something in the buffer, not only on the ones that
+    /// produced a fix. A password is not wrong-layout text and so produces no
+    /// fix — if the check only ran when a fix existed, a password field that
+    /// does not raise the secure event input flag would never be noticed and
+    /// the buffer would simply keep growing.
+    func testTheSecureFieldIsCheckedEvenWhenThereIsNoFix() {
+        let inspection = SafetyGate.inspection(for: .ignore(reason: "no gate met"))
+        XCTAssertTrue(inspection.checksSecureField)
+        XCTAssertNil(inspection.caretTextLength, "nothing is deleted, so nothing is read")
+    }
+
+    func testOnlyTheAutoPathReadsTheCaretText() {
+        let candidate = fix("hgsghl")
+
+        XCTAssertEqual(
+            SafetyGate.inspection(for: .autoApply(candidate)),
+            SafetyGate.Inspection(checksSecureField: true, caretTextLength: 6))
+        XCTAssertEqual(
+            SafetyGate.inspection(for: .suggest(candidate)),
+            SafetyGate.Inspection(checksSecureField: true, caretTextLength: nil),
+            "a suggestion deletes nothing, so it never pays for the read")
+    }
+
+    func testCaretLengthIsCountedInUTF16Units() {
+        // Six Arabic letters and a space: seven UTF-16 units, and the
+        // accessibility range that will be asked for is counted the same way.
+        let candidate = fix("السلام ")
+        XCTAssertEqual(SafetyGate.inspection(for: .autoApply(candidate)).caretTextLength, 7)
+    }
+
+    func testAXVerifySkipSuppressesTheCaretReadButNotTheSecureCheck() {
+        let inspection = SafetyGate.inspection(for: .autoApply(fix()), skipVerify: true)
+        XCTAssertTrue(inspection.checksSecureField, "opting out of verification is not opting out "
+            + "of password detection")
+        XCTAssertNil(inspection.caretTextLength)
+    }
+
+    // MARK: - What may be shown
+
+    /// The evaluation carries the region — the user's own text — so none of it
+    /// reaches the debug window or the log until the focused field is known
+    /// not to be a password field. §6(c): drop the buffer, show nothing.
+    func testADropPublishesNothingAboutTheRegion() {
+        XCTAssertFalse(SafetyGate.Resolution.drop(reason: "x").mayPublishRegion)
+        XCTAssertTrue(SafetyGate.Resolution.nothing.mayPublishRegion)
+        XCTAssertTrue(SafetyGate.Resolution.autoApply.mayPublishRegion)
+        XCTAssertTrue(SafetyGate.Resolution.suggest(downgradedFrom: nil).mayPublishRegion)
+        XCTAssertTrue(SafetyGate.Resolution.suggest(downgradedFrom: "r").mayPublishRegion)
+    }
+
+    /// An ignored decision in a password field is still a password: it must be
+    /// dropped and withheld, exactly like a fix would be.
+    func testAnIgnoredDecisionInASecureFieldIsWithheldAndDropped() {
+        let resolution = SafetyGate.resolve(
+            decision: .ignore(reason: "no gate met"), secureField: .secure)
+        XCTAssertEqual(resolution, .drop(reason: "the focused field is a password field"))
+        XCTAssertFalse(resolution.mayPublishRegion)
+    }
+
     // MARK: - Policy capping, end to end through the decision function
 
     /// A region that auto-applies under `.normal` must come out as a suggestion

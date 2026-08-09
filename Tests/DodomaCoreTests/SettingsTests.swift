@@ -193,4 +193,30 @@ final class SettingsTests: XCTestCase {
     func testFreshInstallHasNoStoredBlobAndNoLegacyKeys() {
         XCTAssertEqual(AppSettings.load(storedJSON: nil), AppSettings.defaults)
     }
+
+    // MARK: - Corruption
+
+    /// The fallback for an unreadable blob is the *permissive* default — every
+    /// app Normal, not paused — so the caller has to be able to tell "nothing
+    /// stored" from "stored and unreadable" before it overwrites anything.
+    func testUnreadableIsDistinguishableFromAbsent() throws {
+        XCTAssertFalse(AppSettings.isUnreadable(nil), "a fresh install is not corruption")
+        XCTAssertFalse(AppSettings.isUnreadable(try encode(AppSettings.defaults)))
+        XCTAssertFalse(
+            AppSettings.isUnreadable(Data("{}".utf8)),
+            "an empty object is readable: every field falls back on its own")
+
+        XCTAssertTrue(AppSettings.isUnreadable(Data("not json at all".utf8)))
+        XCTAssertTrue(AppSettings.isUnreadable(Data()))
+        XCTAssertTrue(AppSettings.isUnreadable(Data("[1,2,3]".utf8)), "right JSON, wrong shape")
+    }
+
+    /// What would be silently lost if the corrupt blob were overwritten without
+    /// a copy: every per-app Off, and the pause switch.
+    func testTheFallbackIsMorePermissiveThanAnythingItCouldReplace() {
+        let fallback = AppSettings.load(storedJSON: Data("corrupt".utf8))
+        XCTAssertEqual(fallback.defaultPolicy, .normal)
+        XCTAssertFalse(fallback.paused)
+        XCTAssertEqual(fallback.policy(for: "com.example.the.user.switched.this.off"), .normal)
+    }
 }
