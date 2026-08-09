@@ -15,13 +15,27 @@ public struct KeyFlags: OptionSet, Equatable, Hashable, Sendable {
     public static let option = KeyFlags(rawValue: 1 << 2)
     public static let command = KeyFlags(rawValue: 1 << 3)
     public static let capsLock = KeyFlags(rawValue: 1 << 4)
+    /// `kCGEventFlagMaskSecondaryFn`. Set by the physical fn key and by the
+    /// keys macOS classifies as function keys — arrows, Home/End, F1–F12.
+    public static let fn = KeyFlags(rawValue: 1 << 5)
 
     /// Modifiers that make a keystroke a command chord rather than typing.
     public static let chordModifiers: KeyFlags = [.command, .control]
 
+    /// Modifiers that mean a Tab or an Escape belongs to somebody else.
+    ///
+    /// ⌘⇥ is the application switcher, ⌃⇥ cycles tabs, ⇧⇥ tabs backwards, ⌘⎋
+    /// and ⌥⎋ are system shortcuts. The suggestion panel may only ever consume
+    /// the *bare* key, or it becomes a way to break the machine's own
+    /// shortcuts — and worse, to turn ⌘⇥ into an accepted fix. Caps Lock is
+    /// deliberately absent: it is how most of the text this app exists to fix
+    /// gets typed in the first place.
+    public static let panelKeyBlockers: KeyFlags = [.shift, .control, .option, .command, .fn]
+
     /// Human-readable rendering for the debug window, e.g. "⌘⇧".
     public var symbols: String {
         var out = ""
+        if contains(.fn) { out += "fn" }
         if contains(.capsLock) { out += "⇪" }
         if contains(.control) { out += "⌃" }
         if contains(.option) { out += "⌥" }

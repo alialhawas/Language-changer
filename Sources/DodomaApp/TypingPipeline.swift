@@ -255,7 +255,7 @@ final class TypingPipeline {
         case .key(let key):
             process(.key(key))
 
-        case .mouseDown(let location):
+        case .mouseDown(let location, let primaryButton):
             // A click on the card is the second way to accept, and it must not
             // be treated as input first: the ordinary mouse-down path bumps the
             // input serial, which would make the acceptance it is *part of*
@@ -264,6 +264,7 @@ final class TypingPipeline {
             let panel = suggestionState.snapshot
             switch SuggestionKeys.mouseDisposition(
                 visible: panel.visible && pendingSuggestion != nil,
+                primaryButton: primaryButton,
                 panelFrame: panel.panelFrame,
                 location: location)
             {
@@ -683,7 +684,10 @@ final class TypingPipeline {
         }
 
         guard captureActive, !isSuppressed, !isApplying, !isGating else {
+            // Silence here would look exactly like a broken accept key, so the
+            // refusal is shown even though the user can do nothing about it.
             Log.pipeline.info("suggestion not applied: the pipeline is busy or suspended")
+            onSuggestionRejected?()
             return
         }
         beginAcceptGate(pending)
@@ -725,6 +729,11 @@ final class TypingPipeline {
 
         guard !inputs.hasMoved(since: serial) else {
             Log.pipeline.info("accepted fix abandoned: input arrived during the caret check")
+            // The keystroke that abandoned this arrived while `isGating` was
+            // set, so its own `armTrigger` was swallowed by the guard there.
+            // Without re-arming, the buffer is never evaluated again until the
+            // user types more. Same reasoning, and same line, as `resolveGate`.
+            if !session.isBufferEmpty { armTrigger() }
             return
         }
 

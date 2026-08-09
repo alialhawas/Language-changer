@@ -54,11 +54,17 @@ public enum SuggestionKeys {
     ///   - consumesKeys: the tap is allowed to swallow events. False after the
     ///     watchdog has tripped, where consuming input is the thing most likely
     ///     to be making the situation worse; the panel is then click-only.
-    public static func disposition(visible: Bool, consumesKeys: Bool, keycode: UInt16)
-        -> KeyDisposition
-    {
+    ///   - flags: the modifiers the event carried. Only the bare key is ever
+    ///     the panel's — see `KeyFlags.panelKeyBlockers`. Deliberately without
+    ///     a default: a caller that forgot to pass them would consume ⌘⇥ and
+    ///     hand it to the pipeline as an acceptance, which applies a fix
+    ///     because the swallowed key never moved the input serial.
+    public static func disposition(
+        visible: Bool, consumesKeys: Bool, keycode: UInt16, flags: KeyFlags
+    ) -> KeyDisposition {
         guard visible else { return .pass }
         guard consumesKeys else { return .dismissAndPass }
+        guard flags.isDisjoint(with: .panelKeyBlockers) else { return .dismissAndPass }
         switch keycode {
         case acceptKeycode: return .swallowAndAccept
         case dismissKeycode: return .swallowAndDismiss
@@ -67,14 +73,18 @@ public enum SuggestionKeys {
     }
 
     /// - Parameters:
+    ///   - primaryButton: a left mouse-down. A right or middle click on the
+    ///     card is not an acceptance; it is a click, and it takes the card away
+    ///     like any other.
     ///   - panelFrame: the card's rectangle, in the same coordinate space as
     ///     `location`. The app layer keeps it in display coordinates, because
     ///     that is what a `CGEvent` reports and the tap must not do arithmetic.
-    public static func mouseDisposition(visible: Bool, panelFrame: CGRect, location: CGPoint)
-        -> MouseDisposition
-    {
+    public static func mouseDisposition(
+        visible: Bool, primaryButton: Bool, panelFrame: CGRect, location: CGPoint
+    ) -> MouseDisposition {
         guard visible else { return .pass }
-        return panelFrame.contains(location) ? .accept : .dismissAndPass
+        guard primaryButton, panelFrame.contains(location) else { return .dismissAndPass }
+        return .accept
     }
 
     /// The acceptance-validity rule.

@@ -6,10 +6,13 @@ import Foundation
 /// no `CGEvent` ever escapes the tap thread.
 enum TapEvent {
     case key(CapturedKey)
-    /// - Parameter at: the pointer in display coordinates, as `CGEvent` reports
-    ///   it. The pipeline needs it to tell a click on the suggestion card from
-    ///   a click anywhere else.
-    case mouseDown(at: CGPoint)
+    /// - Parameters:
+    ///   - at: the pointer in display coordinates, as `CGEvent` reports it. The
+    ///     pipeline needs it to tell a click on the suggestion card from a click
+    ///     anywhere else.
+    ///   - primaryButton: a left mouse-down. Only a left click on the card
+    ///     accepts a suggestion.
+    case mouseDown(at: CGPoint, primaryButton: Bool)
     /// The accept key, consumed by the tap while a suggestion is on screen.
     /// Deliberately not a `.key`: it never reaches the typed buffer, and it must
     /// not move the input serial the acceptance is validated against.
@@ -247,7 +250,7 @@ final class EventTapController {
             if handleKeyDown(event) { return nil }
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             if !isSelfInjected(event) {
-                deliver(.mouseDown(at: event.location))
+                deliver(.mouseDown(at: event.location, primaryButton: type == .leftMouseDown))
             }
         default:
             break
@@ -293,15 +296,17 @@ final class EventTapController {
         guard !isSelfInjected(event) else { return false }
 
         let keycode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = KeyFlags(event.flags)
 
-        // Autorepeat floods the pipeline with duplicates of the same character.
-        // Backspace is the exception: held-down deletes must shrink the buffer.
-        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        if isAutorepeat && keycode != Keycode.delete { return false }
-
+        // Ahead of the autorepeat filter on purpose. A held-down accept or
+        // dismiss key has to be consumed for as long as the card is up; if the
+        // repeats were dropped here they would still be *returned* to the
+        // system, and the application underneath would receive a stream of
+        // tabs while the panel it belongs to sits on top of it.
         let panel = suggestion.snapshot
         switch SuggestionKeys.disposition(
-            visible: panel.visible, consumesKeys: panel.consumesKeys, keycode: keycode)
+            visible: panel.visible, consumesKeys: panel.consumesKeys, keycode: keycode,
+            flags: flags)
         {
         case .swallowAndAccept:
             deliver(.suggestionAccept)
@@ -316,12 +321,17 @@ final class EventTapController {
             break
         }
 
+        // Autorepeat floods the pipeline with duplicates of the same character.
+        // Backspace is the exception: held-down deletes must shrink the buffer.
+        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if isAutorepeat && keycode != Keycode.delete { return false }
+
         let keyboardType = UInt32(
             truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeyboardType))
 
         let captured = CapturedKey(
             keycode: keycode,
-            flags: KeyFlags(event.flags),
+            flags: flags,
             producedText: Self.unicodeString(from: event),
             keyboardType: keyboardType,
             timestamp: Date().timeIntervalSinceReferenceDate
@@ -374,6 +384,7 @@ extension KeyFlags {
         if flags.contains(.maskAlternate) { result.insert(.option) }
         if flags.contains(.maskCommand) { result.insert(.command) }
         if flags.contains(.maskAlphaShift) { result.insert(.capsLock) }
+        if flags.contains(.maskSecondaryFn) { result.insert(.fn) }
         self = result
     }
 }

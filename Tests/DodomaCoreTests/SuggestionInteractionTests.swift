@@ -8,39 +8,78 @@ import XCTest
 final class SuggestionKeyDispositionTests: XCTestCase {
     private let ordinary: UInt16 = 0  // "a"
 
+    private func disposition(
+        visible: Bool = true, consumesKeys: Bool = true, keycode: UInt16, flags: KeyFlags = []
+    ) -> KeyDisposition {
+        SuggestionKeys.disposition(
+            visible: visible, consumesKeys: consumesKeys, keycode: keycode, flags: flags)
+    }
+
     func testNothingIsEverSwallowedWhileNoPanelIsUp() {
         for keycode in [SuggestionKeys.acceptKeycode, SuggestionKeys.dismissKeycode, ordinary] {
             XCTAssertEqual(
-                SuggestionKeys.disposition(visible: false, consumesKeys: true, keycode: keycode),
-                .pass,
-                "keycode \(keycode)")
+                disposition(visible: false, keycode: keycode), .pass, "keycode \(keycode)")
         }
     }
 
-    func testThePanelKeysAreSwallowedWhileItIsUp() {
+    func testTheBarePanelKeysAreSwallowedWhileItIsUp() {
         XCTAssertEqual(
-            SuggestionKeys.disposition(
-                visible: true, consumesKeys: true, keycode: SuggestionKeys.acceptKeycode),
+            disposition(keycode: SuggestionKeys.acceptKeycode), .swallowAndAccept)
+        XCTAssertEqual(
+            disposition(keycode: SuggestionKeys.dismissKeycode), .swallowAndDismiss)
+    }
+
+    /// Caps Lock is how most of the text this app fixes gets typed, so it is
+    /// not a blocker anywhere else and must not become one here.
+    func testCapsLockDoesNotStopThePanelKeysBeingSwallowed() {
+        XCTAssertEqual(
+            disposition(keycode: SuggestionKeys.acceptKeycode, flags: [.capsLock]),
             .swallowAndAccept)
         XCTAssertEqual(
-            SuggestionKeys.disposition(
-                visible: true, consumesKeys: true, keycode: SuggestionKeys.dismissKeycode),
+            disposition(keycode: SuggestionKeys.dismissKeycode, flags: [.capsLock]),
             .swallowAndDismiss)
+    }
+
+    /// The regression this parameter exists for. ⌘⇥ is the application
+    /// switcher; consuming it would both break the switcher and hand the
+    /// pipeline an acceptance — and a swallowed key never moves the input
+    /// serial, so that acceptance would validate and a fix would be applied.
+    func testAnyModifierOnAPanelKeyPassesItStraightThrough() {
+        let modifiers: [(String, KeyFlags)] = [
+            ("command", [.command]),
+            ("control", [.control]),
+            ("option", [.option]),
+            ("shift", [.shift]),
+            ("fn", [.fn]),
+            ("command+shift", [.command, .shift]),
+            ("control+option", [.control, .option]),
+            ("command+capsLock", [.command, .capsLock]),
+        ]
+        for (name, flags) in modifiers {
+            for keycode in [SuggestionKeys.acceptKeycode, SuggestionKeys.dismissKeycode] {
+                XCTAssertEqual(
+                    disposition(keycode: keycode, flags: flags),
+                    .dismissAndPass,
+                    "\(name) + keycode \(keycode)")
+            }
+        }
+    }
+
+    /// Pinned against the option set, so a modifier added to `KeyFlags` later
+    /// has to be classified on purpose.
+    func testTheBlockerSetIsEverythingButCapsLock() {
+        XCTAssertEqual(
+            KeyFlags.panelKeyBlockers, [.shift, .control, .option, .command, .fn])
+        XCTAssertFalse(KeyFlags.panelKeyBlockers.contains(.capsLock))
     }
 
     /// Typing through the panel is how a suggestion is declined, so the key has
     /// to reach the application.
     func testOrdinaryTypingPassesThroughAndTakesThePanelDown() {
-        XCTAssertEqual(
-            SuggestionKeys.disposition(visible: true, consumesKeys: true, keycode: ordinary),
-            .dismissAndPass)
-        XCTAssertEqual(
-            SuggestionKeys.disposition(
-                visible: true, consumesKeys: true, keycode: Keycode.returnKey),
-            .dismissAndPass)
-        XCTAssertEqual(
-            SuggestionKeys.disposition(visible: true, consumesKeys: true, keycode: Keycode.delete),
-            .dismissAndPass)
+        XCTAssertEqual(disposition(keycode: ordinary), .dismissAndPass)
+        XCTAssertEqual(disposition(keycode: Keycode.returnKey), .dismissAndPass)
+        XCTAssertEqual(disposition(keycode: Keycode.delete), .dismissAndPass)
+        XCTAssertEqual(disposition(keycode: ordinary, flags: [.shift]), .dismissAndPass)
     }
 
     /// After the watchdog trips nothing is consumed at all — including the
@@ -48,7 +87,7 @@ final class SuggestionKeyDispositionTests: XCTestCase {
     func testTheDegradedTapSwallowsNothing() {
         for keycode in [SuggestionKeys.acceptKeycode, SuggestionKeys.dismissKeycode, ordinary] {
             XCTAssertEqual(
-                SuggestionKeys.disposition(visible: true, consumesKeys: false, keycode: keycode),
+                disposition(consumesKeys: false, keycode: keycode),
                 .dismissAndPass,
                 "keycode \(keycode)")
         }
@@ -62,31 +101,35 @@ final class SuggestionKeyDispositionTests: XCTestCase {
 
 final class SuggestionMouseDispositionTests: XCTestCase {
     private let card = CGRect(x: 200, y: 300, width: 240, height: 70)
+    private let onCard = CGPoint(x: 300, y: 320)
 
-    func testAClickOnTheCardAccepts() {
-        XCTAssertEqual(
-            SuggestionKeys.mouseDisposition(
-                visible: true, panelFrame: card, location: CGPoint(x: 300, y: 320)),
-            .accept)
+    private func disposition(
+        visible: Bool = true, primaryButton: Bool = true, location: CGPoint
+    ) -> MouseDisposition {
+        SuggestionKeys.mouseDisposition(
+            visible: visible, primaryButton: primaryButton, panelFrame: card, location: location)
+    }
+
+    func testALeftClickOnTheCardAccepts() {
+        XCTAssertEqual(disposition(location: onCard), .accept)
+    }
+
+    /// A right or middle click is a click, not an acceptance. Accepting on one
+    /// would turn a context-menu attempt into a rewrite.
+    func testOnlyTheLeftButtonAccepts() {
+        XCTAssertEqual(disposition(primaryButton: false, location: onCard), .dismissAndPass)
     }
 
     func testAClickAnywhereElseDismissesAndIsStillAClick() {
+        XCTAssertEqual(disposition(location: CGPoint(x: 100, y: 100)), .dismissAndPass)
         XCTAssertEqual(
-            SuggestionKeys.mouseDisposition(
-                visible: true, panelFrame: card, location: CGPoint(x: 100, y: 100)),
-            .dismissAndPass)
-        XCTAssertEqual(
-            SuggestionKeys.mouseDisposition(
-                visible: true, panelFrame: card, location: CGPoint(x: 441, y: 320)),
-            .dismissAndPass,
+            disposition(location: CGPoint(x: 441, y: 320)), .dismissAndPass,
             "just past the right edge")
     }
 
     func testWithNoPanelUpEveryClickIsOrdinary() {
-        XCTAssertEqual(
-            SuggestionKeys.mouseDisposition(
-                visible: false, panelFrame: card, location: CGPoint(x: 300, y: 320)),
-            .pass)
+        XCTAssertEqual(disposition(visible: false, location: onCard), .pass)
+        XCTAssertEqual(disposition(visible: false, primaryButton: false, location: onCard), .pass)
     }
 }
 

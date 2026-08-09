@@ -107,12 +107,24 @@ final class FocusOracle {
         }
         timeoutQueue.asyncAfter(deadline: .now() + Self.deadline, execute: expiry)
 
-        queue.async {
-            let anchor = CaretLocator.locate(
-                pid: pid, geometry: geometry, rightToLeftText: rightToLeftText)
+        queue.async { [weak self] in
+            let anchor =
+                self?.performLocate(
+                    pid: pid, geometry: geometry, rightToLeftText: rightToLeftText)
+                ?? geometry.pointerAnchor
             expiry.cancel()
             once.fire(anchor)
         }
+    }
+
+    /// An instance method for the same reason `perform` is one: the queue is
+    /// the oracle's, so work that outlives the oracle must not run on it.
+    private func performLocate(pid: pid_t, geometry: ScreenGeometry, rightToLeftText: Bool)
+        -> CaretAnchor
+    {
+        dispatchPrecondition(condition: .onQueue(queue))
+        return CaretLocator.locate(
+            pid: pid, geometry: geometry, rightToLeftText: rightToLeftText)
     }
 
     /// Forgets the cached verdict. Called when the frontmost app changes: the
