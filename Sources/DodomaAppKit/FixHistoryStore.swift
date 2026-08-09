@@ -52,9 +52,21 @@ final class FixHistoryStore: @unchecked Sendable {
         lock.lock()
         let cleared = history.noteFrontmost(bundleID: bundleID)
         lock.unlock()
-        if cleared {
-            Log.fix.debug(
-                "undo withdrawn: \(FixHistory.Invalidation.appChanged.rawValue, privacy: .public)")
-        }
+        log(cleared, .appChanged)
+    }
+
+    /// The selected keyboard layout changed. A no-op when it changed to the one
+    /// the recorded fix put it in, which is what the fix's own switch looks
+    /// like coming back.
+    func noteInputSource(_ sourceID: String?) {
+        lock.lock()
+        let cleared = history.noteInputSource(sourceID)
+        lock.unlock()
+        log(cleared, .inputSourceChanged)
+    }
+
+    private func log(_ cleared: Bool, _ reason: FixHistory.Invalidation) {
+        guard cleared else { return }
+        Log.fix.debug("undo withdrawn: \(reason.rawValue, privacy: .public)")
     }
 }

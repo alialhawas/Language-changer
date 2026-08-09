@@ -57,6 +57,10 @@ public struct FixHistory: Equatable, Sendable {
         case focusChanged
         /// The user moved on: a click, or a committed line.
         case userMovedOn
+        /// The user selected a different keyboard layout by hand — which, one
+        /// keystroke after a fix switched the layout for them, is as clear a
+        /// "no, I meant that" as there is.
+        case inputSourceChanged
         /// The undo ran.
         case undone
         /// The buffer was purged for a reason that also forbids keeping the
@@ -101,6 +105,28 @@ public struct FixHistory: Equatable, Sendable {
     public mutating func noteFrontmost(bundleID: String?) -> Bool {
         guard let slot, slot.bundleID != bundleID else { return false }
         return invalidate(.appChanged)
+    }
+
+    /// Invalidates when the keyboard layout moved somewhere the fix did not put
+    /// it.
+    ///
+    /// Every fix ends by selecting `targetLayoutID`, and the system announces
+    /// that back to the app as a layout change indistinguishable, as an event,
+    /// from the user picking one from the menu bar. Comparing the *selected
+    /// layout* rather than counting notifications tells them apart without any
+    /// state to get wrong: the fix's own announcement names the layout the fix
+    /// asked for, and anything else is the user going somewhere on their own.
+    ///
+    /// It is also order-independent, which matters because that announcement
+    /// races the record it concerns: arriving first, it finds an empty slot and
+    /// does nothing; arriving second, it matches and does nothing.
+    ///
+    /// - Parameter sourceID: the input source now selected. Nil — the read
+    ///   failed — invalidates, because an unknown layout is not the fix's.
+    @discardableResult
+    public mutating func noteInputSource(_ sourceID: String?) -> Bool {
+        guard let slot, sourceID != slot.fix.targetLayoutID else { return false }
+        return invalidate(.inputSourceChanged)
     }
 
     /// The fix the user may still take back, or nil.
@@ -160,6 +186,9 @@ public struct FixHistory: Equatable, Sendable {
             // back to the same application does not end the window.
             return false
         case .inputSourceChanged:
+            // Handled by `noteInputSource`, which compares layouts. It has to
+            // be: every fix ends by switching the layout, so answering true
+            // here would withdraw the undo a few milliseconds after each one.
             return false
         }
     }

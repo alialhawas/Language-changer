@@ -26,7 +26,7 @@ private enum Canonical {
     static func applied(
         at date: Date, in bundleID: String? = "com.apple.TextEdit", serial: UInt64 = 7
     ) -> AppliedFix {
-        AppliedFix(fix: fix, appliedAt: date, bundleID: bundleID, inputSerial: serial)
+        AppliedFix(fix: fix, appliedAt: date, bundleID: bundleID, userInputSerial: serial)
     }
 }
 
@@ -191,6 +191,41 @@ final class FixHistoryTests: XCTestCase {
         XCTAssertFalse(history.noteFrontmost(bundleID: "anything"))
     }
 
+    // MARK: - Layout changes
+
+    /// Every fix ends by selecting the target layout, and the system announces
+    /// that back as a change indistinguishable, as an event, from the user
+    /// picking one. Withdrawing the undo on it would withdraw it a few
+    /// milliseconds after every single fix — in exactly the applications the
+    /// undo matters most in, since the caret check covers the others.
+    func testTheFixesOwnLayoutSwitchDoesNotWithdrawTheUndo() {
+        var history = historyWithAFix()
+        XCTAssertFalse(history.noteInputSource(Canonical.arabic))
+        XCTAssertNotNil(history.undoableFix(now: now))
+    }
+
+    /// A layout the fix did not ask for is the user going somewhere on their
+    /// own, one keystroke after being corrected. That is a "no, I meant that".
+    func testAUserLayoutSwitchWithdrawsTheUndo() {
+        var history = historyWithAFix()
+        XCTAssertTrue(history.noteInputSource(Canonical.english))
+        XCTAssertNil(history.undoableFix(now: now))
+    }
+
+    func testAnUnreadableLayoutWithdrawsTheUndo() {
+        var history = historyWithAFix()
+        XCTAssertTrue(history.noteInputSource(nil), "an unknown layout is not the fix's")
+    }
+
+    /// The announcement races the record it concerns, so the rule has to be
+    /// right in both orders. Arriving first, it finds an empty slot.
+    func testALayoutChangeBeforeAnythingIsRecordedDoesNothing() {
+        var history = FixHistory()
+        XCTAssertFalse(history.noteInputSource(Canonical.english))
+        history.record(Canonical.applied(at: now))
+        XCTAssertNotNil(history.undoableFix(now: now))
+    }
+
     // MARK: - The move-on signals
 
     private func key(_ keycode: UInt16, _ flags: KeyFlags = [], text: String = "x") -> SessionInput {
@@ -240,7 +275,7 @@ final class FixHistoryTests: XCTestCase {
                 sourceLayoutID: Canonical.english, replacedText: "l,;", capsMode: .asTyped),
             appliedAt: now.addingTimeInterval(5),
             bundleID: "com.apple.TextEdit",
-            inputSerial: 9)
+            userInputSerial: 9)
         history.record(second)
 
         XCTAssertEqual(history.undoableFix(now: now.addingTimeInterval(5))?.fix, second.fix)

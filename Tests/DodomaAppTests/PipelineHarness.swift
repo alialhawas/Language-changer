@@ -32,6 +32,15 @@ final class FakeFixEngine: FixApplying {
     /// landing in the middle of a delete burst.
     var duringApply: (() -> Void)?
 
+    /// Run after the completion handler, with the layout the fix selected.
+    ///
+    /// The real sequence ends in `TISSelectInputSource`, and the system
+    /// announces that back to the app as a keyboard-layout change — an input,
+    /// arriving a few milliseconds after every single fix. A fake that stayed
+    /// silent about it would let a rule that mistakes it for the user typing
+    /// pass every test in this file, which is exactly what happened once.
+    var afterApply: ((Fix) -> Void)?
+
     var applied: [Call] {
         lock.lock()
         defer { lock.unlock() }
@@ -52,6 +61,9 @@ final class FakeFixEngine: FixApplying {
         lock.unlock()
         duringApply?()
         completion(result)
+        // Only a sequence that got as far as switching the layout announces
+        // one, which is the successful one.
+        if case .success = result { afterApply?(fix) }
     }
 }
 
@@ -153,6 +165,7 @@ final class PipelineHarness {
     private var rejections = 0
     private var undoCount = 0
     private var hides = 0
+    private var switches: [String] = []
 
     /// - Parameter axVerifySkip: seeded into the settings blob before the store
     ///   reads it, because there is no setter for it — it is a hand-edited
@@ -179,6 +192,14 @@ final class PipelineHarness {
         pipeline.onRequestRejected = { [weak self] in self?.bumpRejections() }
         pipeline.onUndoApplied = { [weak self] in self?.bumpUndos() }
         pipeline.onHideSuggestion = { [weak self] in self?.bumpHides() }
+
+        // Every applied fix ends by switching the keyboard layout, and the app
+        // hears that back. On by default, because a fix that does not announce
+        // its own layout switch is not a fix any user will ever perform.
+        engine.afterApply = { [weak self] fix in
+            self?.noteLayoutSwitch(fix.targetLayoutID)
+            self?.pipeline.inputSourceChanged(to: fix.targetLayoutID)
+        }
 
         pipeline.setCaptureActive(true)
         activate(bundleID)
@@ -217,6 +238,13 @@ final class PipelineHarness {
 
     func click() {
         send(.mouseDown(at: .zero, primaryButton: true))
+    }
+
+    /// The user picking a layout out of the menu bar, as the pipeline's own
+    /// notification observer would report it.
+    func switchLayout(to sourceID: String?) {
+        pipeline.inputSourceChanged(to: sourceID)
+        drain()
     }
 
     func undo() {
@@ -272,6 +300,19 @@ final class PipelineHarness {
         lock.lock()
         defer { lock.unlock() }
         return hides
+    }
+
+    /// The layout switches the applies announced, in order.
+    var layoutSwitches: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return switches
+    }
+
+    private func noteLayoutSwitch(_ sourceID: String) {
+        lock.lock()
+        switches.append(sourceID)
+        lock.unlock()
     }
 
     var isEvaluationArmed: Bool {

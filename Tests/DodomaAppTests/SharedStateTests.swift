@@ -86,7 +86,7 @@ final class FixHistoryStoreTests: XCTestCase {
                 capsMode: .asTyped),
             appliedAt: now.addingTimeInterval(offset),
             bundleID: bundleID,
-            inputSerial: 3)
+            userInputSerial: 3)
     }
 
     func testRecordThenRead() {

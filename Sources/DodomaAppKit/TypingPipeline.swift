@@ -89,6 +89,15 @@ final class TypingPipeline {
     /// another is work about text that has since moved. Lock-protected rather
     /// than queue-confined because the injector reads it from its own queue.
     private let inputs = InputSerial()
+    /// The same count, restricted to what the *user* did: keystrokes and
+    /// clicks. `inputs` deliberately counts application switches and layout
+    /// changes too, because work in flight is invalidated by all of them — but
+    /// a fix ends by switching the layout, and the app hears that back as an
+    /// input a few milliseconds later, so a rule phrased against `inputs` would
+    /// read every fix as having been overtaken the instant it landed. The undo
+    /// slot is stamped against this one; the other two signals have their own,
+    /// sharper rules in `FixHistory`.
+    private let userInputs = InputSerial()
     /// Set when real input was discarded because a fix was in flight. Those
     /// keystrokes reached the screen but not the buffer, so the buffer no
     /// longer describes the text in front of the caret.
@@ -161,7 +170,11 @@ final class TypingPipeline {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.submit(.inputSourceChanged(at: Self.now()))
+            // Which layout it changed *to* is read here, on the main thread,
+            // because that is where Text Input Sources calls belong and because
+            // the undo slot cannot tell the fix's own switch from the user's
+            // without it.
+            self?.inputSourceChanged(to: LayoutEngine.selectedLayoutID())
         }
 
         let enabledSourcesName = Notification.Name(
@@ -176,6 +189,19 @@ final class TypingPipeline {
         }
 
         warmLayoutCache()
+    }
+
+    /// The selected keyboard layout changed — by the user's hand, or by the
+    /// last fix, which ends by switching it. Main thread.
+    func inputSourceChanged(to sourceID: String?) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            // Before `process`, which is where the buffer reset happens: the
+            // two are independent, and the undo rule wants the layout, which
+            // `SessionInput` does not carry.
+            self.history.noteInputSource(sourceID)
+            self.process(.inputSourceChanged(at: Self.now()))
+        }
     }
 
     /// Another application came to the front. Main thread.
@@ -321,8 +347,10 @@ final class TypingPipeline {
 
         // Before every early return below: input the pipeline chose not to
         // buffer still reached the screen, and that is exactly what the
-        // in-flight work needs to know about.
+        // in-flight work needs to know about. Ahead of the suppression check
+        // too, so that typing during a pause still counts as having happened.
         inputs.bump()
+        if Self.isTypingSignal(input) { userInputs.bump() }
 
         // Every kind of input invalidates an open suggestion — a keystroke and
         // a click because the text moved, an application switch and a layout
@@ -922,14 +950,16 @@ final class TypingPipeline {
         // `.bestEffort`, plus undo's own condition: the two ways best effort
         // proceeds without comparing anything — an element that exposes no
         // text, an application in `axVerifySkip` — are only safe while nothing
-        // has happened since the fix landed. `serial` above is taken when the
-        // undo was *asked for*, which says nothing about the minute before
-        // that; `applied.inputSerial` is the one with the fix as its origin.
+        // the user did has happened since the fix landed. `serial` above is
+        // taken when the undo was *asked for*, which says nothing about the
+        // minute before that; `applied.userInputSerial` has the fix as its
+        // origin, and counts only keystrokes and clicks — a fix's own layout
+        // switch comes back as an input and must not read as the user typing.
         let verification = CaretVerification.undoVerdict(
             read: focus.caretRead,
             replacedText: inverse.replacedText,
             verified: verified,
-            inputSinceFix: inputs.hasMoved(since: applied.inputSerial))
+            inputSinceFix: userInputs.hasMoved(since: applied.userInputSerial))
 
         switch SafetyGate.resolve(
             decision: .autoApply(inverse), secureField: focus.security, verification: verification)
@@ -992,6 +1022,10 @@ final class TypingPipeline {
         isApplying = true
         droppedInputDuringApply = false
         cancelTrigger()
+        // Taken here rather than threaded down from each gate: the gates call
+        // this synchronously, in the same queue block, so it is the same value
+        // and one fewer parameter to keep in step across three call sites.
+        let userSerial = userInputs.current
         Log.fix.info(
             "\(kind.description, privacy: .public): delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
         )
@@ -1005,13 +1039,13 @@ final class TypingPipeline {
             guard let self else { return }
             self.queue.async {
                 self.finishApply(
-                    fix, bundleID: bundleID, kind: kind, verifiedAt: verifiedAt, result: result)
+                    fix, bundleID: bundleID, kind: kind, userSerial: userSerial, result: result)
             }
         }
     }
 
     private func finishApply(
-        _ fix: Fix, bundleID: String?, kind: ApplyKind, verifiedAt: UInt64,
+        _ fix: Fix, bundleID: String?, kind: ApplyKind, userSerial: UInt64,
         result: Result<FixProgress, FixFailure>
     ) {
         dispatchPrecondition(condition: .onQueue(queue))
@@ -1024,7 +1058,7 @@ final class TypingPipeline {
             switch kind {
             case .auto, .accepted:
                 let applied = AppliedFix(
-                    fix: fix, appliedAt: Date(), bundleID: bundleID, inputSerial: verifiedAt)
+                    fix: fix, appliedAt: Date(), bundleID: bundleID, userInputSerial: userSerial)
                 if droppedInputDuringApply {
                     // Real input reached the screen while the burst was
                     // running — it was dropped here, not there — so what is in

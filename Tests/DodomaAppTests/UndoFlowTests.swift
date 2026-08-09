@@ -323,6 +323,63 @@ final class UndoFlowTests: XCTestCase {
         XCTAssertNil(harness.pipeline.undoableFix())
     }
 
+    // MARK: - The fix's own layout switch
+
+    /// The regression this exists to stop coming back. A fix ends by selecting
+    /// the target layout, and the app hears that back as an input a few
+    /// milliseconds later — with no user involvement at all. A rule that
+    /// counted it would make ⌘⌥Z permanently ✕ in terminals, Electron apps and
+    /// everything in `axVerifySkip`: precisely the population that has nothing
+    /// but the serial to go on.
+    func testUndoWorksOnTheUnreadablePathAfterTheFixesOwnLayoutSwitch() {
+        applyAFix()
+        XCTAssertEqual(
+            harness.layoutSwitches, [Fixtures.arabic],
+            "precondition: the apply announced its own switch")
+
+        harness.oracle.answer(caret: .unreadable)
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 2)
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+        XCTAssertEqual(harness.rejectionCount, 0)
+    }
+
+    /// The same for an application that is never asked about its caret.
+    func testAnUnverifiedUndoSurvivesTheFixesOwnLayoutSwitch() {
+        harness = PipelineHarness(axVerifySkip: [Fixtures.app])
+        harness.oracle.answer(caret: Fixtures.caretBeforeFix)
+        applyAFix()
+        harness.undo()
+
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+    }
+
+    /// A *second* layout change, to somewhere the fix did not put it, is the
+    /// user going their own way. It still withdraws the undo.
+    func testAUserLayoutSwitchAfterTheFixWithdrawsTheUndo() {
+        applyAFix()
+        XCTAssertNotNil(harness.pipeline.undoableFix())
+
+        harness.switchLayout(to: Fixtures.english)
+        XCTAssertNil(harness.pipeline.undoableFix())
+
+        harness.oracle.answer(caret: .unreadable)
+        harness.undo()
+        XCTAssertEqual(harness.engine.applied.count, 1, "nothing was deleted")
+    }
+
+    /// Typing after the fix still counts, layout switch or no layout switch.
+    func testTheLayoutSwitchDoesNotMaskRealTyping() {
+        applyAFix()
+        harness.type("a")
+        harness.oracle.answer(caret: .unreadable)
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 1)
+        XCTAssertEqual(harness.rejectionCount, 1)
+    }
+
     // MARK: - What the menu is told
 
     func testCanUndoFollowsTheSlot() {
