@@ -70,6 +70,14 @@ openssl req -x509 -newkey rsa:2048 \
     -config "$CONF" \
     -extensions v3_codesign
 
+# The PKCS#12 archive needs a non-empty passphrase: Security.framework rejects
+# an empty-password p12 with "MAC verification failed during PKCS12 import",
+# regardless of the encryption or MAC algorithm used to produce it. The archive
+# is a temp file removed by the EXIT trap, so a random throwaway passphrase is
+# enough and never has to be stored.
+export P12_PASS
+P12_PASS="$(openssl rand -hex 16)"
+
 # $1 is an optional extra openssl flag, e.g. -legacy.
 export_p12() {
     openssl pkcs12 -export ${1:+"$1"} \
@@ -77,23 +85,31 @@ export_p12() {
         -in "$CERT_PEM" \
         -out "$P12" \
         -name "$IDENTITY" \
-        -passout pass:
+        -passout env:P12_PASS
 }
 
 echo "==> Bundling key and certificate into a PKCS#12 archive"
 export_p12
 
 echo "==> Importing into the login keychain"
-if ! security import "$P12" -k "$KEYCHAIN" -P "" -T /usr/bin/codesign; then
+if ! security import "$P12" -k "$KEYCHAIN" -P "$P12_PASS" -T /usr/bin/codesign; then
     if openssl pkcs12 -help 2>&1 | grep -q -- "-legacy"; then
-        echo "    Import failed. Re-exporting with legacy PKCS#12 encryption."
+        # Expected on OpenSSL 3.x, whose default AES-256-CBC/PBKDF2 archives
+        # Security.framework will not read.
+        echo "    Default PKCS#12 encryption was rejected; re-exporting with -legacy."
         export_p12 -legacy
-        security import "$P12" -k "$KEYCHAIN" -P "" -T /usr/bin/codesign
+        if ! security import "$P12" -k "$KEYCHAIN" -P "$P12_PASS" -T /usr/bin/codesign; then
+            unset P12_PASS
+            echo "FAILURE: could not import the certificate into $KEYCHAIN."
+            exit 1
+        fi
     else
+        unset P12_PASS
         echo "FAILURE: could not import the certificate into $KEYCHAIN."
         exit 1
     fi
 fi
+unset P12_PASS
 
 echo
 echo "==> Authorising /usr/bin/codesign to use the new private key"
