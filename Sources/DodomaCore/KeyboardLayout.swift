@@ -50,18 +50,27 @@ public enum LayoutLanguage: Equatable, Hashable, Sendable {
 public struct LayoutFixture: Codable, Equatable, Sendable {
     public let sourceID: String
     public let languageCode: String
+    /// `LMGetKbdType()` of the machine that produced the snapshot. A `uchr`
+    /// table carries several keyboard-type ranges (ANSI, ISO, JIS) that
+    /// disagree about punctuation, so the table is only reproducible together
+    /// with the type it was captured against.
+    public let keyboardType: UInt32
     public let uchrBase64: String
 
-    public init(sourceID: String, languageCode: String, uchrBase64: String) {
+    public init(
+        sourceID: String, languageCode: String, keyboardType: UInt32, uchrBase64: String
+    ) {
         self.sourceID = sourceID
         self.languageCode = languageCode
+        self.keyboardType = keyboardType
         self.uchrBase64 = uchrBase64
     }
 
-    public init(layout: KeyboardLayout) {
+    public init(layout: KeyboardLayout, keyboardType: UInt32) {
         self.init(
             sourceID: layout.sourceID,
             languageCode: layout.languageCode,
+            keyboardType: keyboardType,
             uchrBase64: layout.uchrData.base64EncodedString())
     }
 

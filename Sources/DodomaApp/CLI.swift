@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import DodomaCore
 import Foundation
 
@@ -94,11 +95,15 @@ enum CLI {
             warn("--dump-layout-fixtures: \(sourceID) is not enabled, skipping")
         }
 
+        let keyboardType = UInt32(LMGetKbdType())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let url = URL(fileURLWithPath: path)
         do {
-            let data = try encoder.encode(matched.map(LayoutFixture.init(layout:)))
+            let fixtures = matched.map {
+                LayoutFixture(layout: $0, keyboardType: keyboardType)
+            }
+            let data = try encoder.encode(fixtures)
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)

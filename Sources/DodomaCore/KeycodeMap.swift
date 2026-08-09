@@ -20,8 +20,12 @@ public enum KeycodeMap {
     ]
 
     /// Returns `nil` if any character has no US keycode.
-    public static func keys(forLatin text: String) -> [CapturedKey]? {
-        let keyboardType = UInt32(LMGetKbdType())
+    ///
+    /// `keyboardType` defaults to the running machine's; tests pass the value
+    /// snapshotted alongside the `uchr` fixture so results do not depend on
+    /// whether the host is ANSI, ISO or JIS.
+    public static func keys(forLatin text: String, keyboardType: UInt32? = nil) -> [CapturedKey]? {
+        let keyboardType = keyboardType ?? UInt32(LMGetKbdType())
         var keys: [CapturedKey] = []
         keys.reserveCapacity(text.count)
 

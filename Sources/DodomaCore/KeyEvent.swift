@@ -63,6 +63,7 @@ public struct CapturedKey: Equatable, Hashable, Sendable {
 public enum Keycode {
     public static let returnKey: UInt16 = 36
     public static let tab: UInt16 = 48
+    public static let space: UInt16 = 49
     public static let delete: UInt16 = 51
     public static let escape: UInt16 = 53
     public static let keypadEnter: UInt16 = 76

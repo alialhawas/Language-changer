@@ -4,12 +4,12 @@ import XCTest
 
 final class KeycodeMapTests: XCTestCase {
     func testEveryMappableCharacterRoundTripsThroughAbc() throws {
-        let abc = try LayoutFixtures.layout(LayoutFixtures.abcSourceID)
+        let abc = try LayoutFixtures.abc()
         let text = "the quick brown fox jumps over the lazy dog 0123456789 ;'[],./\\-=`"
-        let keys = try XCTUnwrap(KeycodeMap.keys(forLatin: text))
+        let keys = try abc.keys(text)
 
         XCTAssertEqual(keys.count, text.count)
-        XCTAssertEqual(LayoutRenderer.render(keys, layout: abc, capsMode: .asTyped), text)
+        XCTAssertEqual(LayoutRenderer.render(keys, layout: abc.layout, capsMode: .asTyped), text)
     }
 
     func testUppercaseMapsToTheLowercaseKeycodePlusShift() throws {
@@ -24,6 +24,14 @@ final class KeycodeMapTests: XCTestCase {
     func testProducedTextMirrorsTheInputCharacters() throws {
         let keys = try XCTUnwrap(KeycodeMap.keys(forLatin: "Hi you"))
         XCTAssertEqual(keys.map(\.producedText), ["H", "i", " ", "y", "o", "u"])
+    }
+
+    func testKeyboardTypeDefaultsToTheHostAndCanBeOverridden() throws {
+        let host = try XCTUnwrap(KeycodeMap.keys(forLatin: "a"))
+        XCTAssertNotEqual(host[0].keyboardType, 0)
+
+        let pinned = try XCTUnwrap(KeycodeMap.keys(forLatin: "a", keyboardType: 41))
+        XCTAssertEqual(pinned[0].keyboardType, 41)
     }
 
     func testEmptyInputYieldsNoKeys() {
