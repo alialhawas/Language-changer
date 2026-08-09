@@ -480,8 +480,21 @@ final class TypingPipeline {
         let resolution = SafetyGate.resolve(
             decision: decision, secureField: focus.security, verification: verification)
 
-        guard resolution.mayPublishRegion else {
-            guard case .drop(let reason) = resolution else { return }
+        // The region-carrying publication, gated by the pure rule.
+        if resolution.mayPublishRegion {
+            var published = snapshot
+            if case .suggest(let downgradedFrom) = resolution, let downgradedFrom {
+                Log.fix.info(
+                    "auto-apply downgraded to a suggestion: \(downgradedFrom, privacy: .public)")
+                published.verdict = "suggest"
+                published.result = "downgraded: \(downgradedFrom)"
+            }
+            publish(published)
+            logDecision(published)
+        }
+
+        switch resolution {
+        case .drop(let reason):
             // Everything about the evaluation is withheld: only that it was
             // skipped, and why. No region, no scores, no `decision` log line.
             Log.pipeline.info("buffer dropped: \(reason, privacy: .public)")
@@ -489,23 +502,16 @@ final class TypingPipeline {
                 .skipped(
                     reason: reason, policy: policy, bundleID: bundleID,
                     evaluatedAt: snapshot.evaluatedAt))
+            // Publishing the cleaned buffer snapshot, rather than staying
+            // silent, is the point: the debug window keeps the *last* snapshot
+            // it was handed even while it is closed, and shows it when it is
+            // next opened. Staying silent would leave the password-bearing one
+            // sitting there. `.secureInput` also purges the keystroke log, so
+            // what replaces it carries neither the text nor the key history.
             resetBuffer(reason: .secureInput)
-            return
-        }
 
-        var published = snapshot
-        if case .suggest(let downgradedFrom) = resolution, let downgradedFrom {
-            Log.fix.info(
-                "auto-apply downgraded to a suggestion: \(downgradedFrom, privacy: .public)")
-            published.verdict = "suggest"
-            published.result = "downgraded: \(downgradedFrom)"
-        }
-        publish(published)
-        logDecision(published)
-
-        guard let fix = decision.fix else { return }
-        switch resolution {
         case .suggest:
+            guard let fix = decision.fix else { break }
             // M6 shows a panel here; for now the status item just blinks.
             Log.pipeline.info(
                 "suggestion available: delete \(fix.deleteCount, privacy: .public) clusters (no panel until M6)"
@@ -513,9 +519,10 @@ final class TypingPipeline {
             onSuggest?(fix)
 
         case .autoApply:
+            guard let fix = decision.fix else { break }
             beginApply(fix, bundleID: bundleID, verifiedAt: serial)
 
-        case .drop, .nothing:
+        case .nothing:
             break
         }
     }

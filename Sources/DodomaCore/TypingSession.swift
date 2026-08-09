@@ -148,9 +148,17 @@ public final class TypingSession {
     /// owner's trigger, which keys off it.
     @discardableResult
     public func reset(reason: ResetReason, at now: TimeInterval) -> BufferSnapshot {
-        buffer.reset(reason: reason)
+        clear(reason: reason)
         lastKeyTimestamp = nil
         return snapshot(at: now)
+    }
+
+    /// The single place the buffer is cleared, so that a reason which also
+    /// requires the debug event log to go cannot be handled in one path and
+    /// forgotten in another. See `ResetReason.purgesHistory`.
+    private func clear(reason: ResetReason) {
+        buffer.reset(reason: reason)
+        if reason.purgesHistory { recentEvents.removeAll(keepingCapacity: true) }
     }
 
     public func snapshot(at now: TimeInterval) -> BufferSnapshot {
@@ -227,7 +235,7 @@ public final class TypingSession {
             if let last = lastKeyTimestamp,
                BufferResetPolicy.isIdle(lastKeyTimestamp: last, now: key.timestamp),
                !buffer.isEmpty {
-                buffer.reset(reason: .idleTimeout)
+                clear(reason: .idleTimeout)
                 performedReset = .idleTimeout
             }
             lastKeyTimestamp = key.timestamp
@@ -242,7 +250,7 @@ public final class TypingSession {
             lastKeyTimestamp = key.timestamp
             // Suppress no-op resets so that holding Return does not churn.
             guard !buffer.isEmpty || buffer.lastResetReason != reason else { return nil }
-            buffer.reset(reason: reason)
+            clear(reason: reason)
             return reason
 
         case .ignore:
@@ -252,7 +260,7 @@ public final class TypingSession {
 
     private func resetIfNotEmpty(_ reason: ResetReason) -> ResetReason? {
         guard !buffer.isEmpty else { return nil }
-        buffer.reset(reason: reason)
+        clear(reason: reason)
         return reason
     }
 

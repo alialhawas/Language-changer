@@ -223,6 +223,59 @@ final class TypingSessionTests: XCTestCase {
 
     // MARK: - Buffer capacity through the session
 
+    // MARK: - The secure-input purge
+
+    /// The drop has to be retroactive. By the time the accessibility layer says
+    /// "password field", the characters are already in the debug event log, and
+    /// that log is published to the debug window in the very next snapshot.
+    func testASecureInputResetAlsoPurgesTheKeystrokeHistory() {
+        let session = TypingSession(frontmostBundleID: "com.apple.Safari")
+        session.handle(character("h", keycode: 4, at: 100))
+        session.handle(character("u", keycode: 32, at: 100.1))
+        session.handle(character("n", keycode: 45, at: 100.2))
+        session.handle(.mouseDown(at: 100.3))
+        XCTAssertEqual(session.snapshot(at: 100.4).recentEvents.count, 4, "precondition")
+
+        let snapshot = session.reset(reason: .secureInput, at: 101)
+
+        XCTAssertEqual(snapshot.text, "")
+        XCTAssertEqual(snapshot.keyCount, 0)
+        XCTAssertEqual(snapshot.lastReset, .secureInput)
+        XCTAssertTrue(snapshot.recentEvents.isEmpty, "the produced text of every key must go too")
+        XCTAssertTrue(
+            session.snapshot(at: 102).recentEvents.isEmpty, "and stay gone in later snapshots")
+    }
+
+    /// The log surviving an ordinary reset is the whole point of it: watching
+    /// what happened either side of one is most of what the window is for.
+    func testAnOrdinaryResetKeepsTheKeystrokeHistory() {
+        for reason in ResetReason.allCases where !reason.purgesHistory {
+            let fresh = TypingSession()
+            fresh.handle(character("a", keycode: 0, at: 100))
+            fresh.handle(character("b", keycode: 11, at: 100.1))
+            let snapshot = fresh.reset(reason: reason, at: 101)
+            XCTAssertEqual(snapshot.text, "", reason.rawValue)
+            XCTAssertEqual(snapshot.recentEvents.count, 2, reason.rawValue)
+        }
+    }
+
+    /// Every path that clears the buffer goes through the same helper, so an
+    /// in-stream reset purges just as a caller-driven one does.
+    func testTheInStreamResetPathsAlsoRespectThePurgeRule() {
+        let session = TypingSession()
+        session.handle(character("a", keycode: 0, at: 100))
+        session.handle(.mouseDown(at: 100.1))
+        XCTAssertEqual(
+            session.snapshot(at: 100.2).recentEvents.count, 2,
+            "a mouse-down reset keeps the history")
+
+        // Nothing in the input stream can produce `.secureInput` today — it
+        // only ever arrives through `reset(reason:at:)` — but the rule lives on
+        // the reason, so it holds wherever a future path puts it.
+        XCTAssertFalse(ResetReason.mouseDown.purgesHistory)
+        XCTAssertTrue(ResetReason.secureInput.purgesHistory)
+    }
+
     func testSessionRespectsTheTwoHundredKeyRing() {
         let session = TypingSession()
         for index in 0..<210 {

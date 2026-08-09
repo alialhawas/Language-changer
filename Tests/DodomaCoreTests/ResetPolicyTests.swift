@@ -104,4 +104,16 @@ final class ResetPolicyTests: XCTestCase {
         XCTAssertTrue(buffer.isEmpty)
         XCTAssertEqual(buffer.lastResetReason, .enterKey)
     }
+
+    // MARK: - Which reasons also throw away the keystroke history
+
+    /// Exhaustive over `allCases`, so adding a reason is a decision somebody
+    /// has to make rather than a default they inherit. The debug event log
+    /// holds the produced text of the last fifty keys; only a reason that means
+    /// "this text was never ours" may take it.
+    func testOnlySecureInputPurgesTheKeystrokeHistory() {
+        let purging = ResetReason.allCases.filter(\.purgesHistory)
+        XCTAssertEqual(purging, [.secureInput])
+        XCTAssertEqual(ResetReason.allCases.count, 13, "a new reason needs a purge decision")
+    }
 }

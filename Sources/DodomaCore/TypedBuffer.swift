@@ -16,6 +16,28 @@ public enum ResetReason: String, Equatable, Hashable, Sendable, CaseIterable {
     case manual
     case secureInput
     case overflow
+
+    /// Whether clearing the buffer must also throw away the debug event log.
+    ///
+    /// The log keeps the produced text of the last fifty keystrokes and
+    /// deliberately survives an ordinary reset — watching what happened either
+    /// side of a reset is most of what the debug window is for.
+    ///
+    /// `secureInput` is the one reason that says those keystrokes were never
+    /// ours to keep. It is set when the focused field turns out to be a
+    /// password field, and by then the characters are already in the log; the
+    /// clear has to be retroactive or the drop protects nothing. Keyed off the
+    /// reason rather than left to each caller so that no future reset path can
+    /// forget it.
+    public var purgesHistory: Bool {
+        switch self {
+        case .secureInput:
+            return true
+        case .enterKey, .tabKey, .escapeKey, .arrowNav, .modifierChord, .mouseDown, .appChanged,
+             .focusChanged, .inputSourceChanged, .idleTimeout, .manual, .overflow:
+            return false
+        }
+    }
 }
 
 /// Ordered record of the keys the user has typed since the last reset.

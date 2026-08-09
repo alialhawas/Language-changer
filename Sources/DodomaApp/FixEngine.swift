@@ -121,10 +121,12 @@ final class FixEngine {
     ///     first destructive event. True means the caller's verification of the
     ///     text in front of the caret no longer holds. Called on the engine's
     ///     queue, so it must be safe to call off the caller's own queue.
+    ///     Deliberately without a default: a caller that forgot to pass one
+    ///     would silently get an unguarded delete burst.
     func apply(
         _ fix: Fix,
         in bundleID: String?,
-        isStale: @escaping () -> Bool = { false },
+        isStale: @escaping () -> Bool,
         completion: @escaping (Result<FixProgress, FixFailure>) -> Void
     ) {
         queue.async {
