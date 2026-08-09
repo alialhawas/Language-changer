@@ -23,4 +23,30 @@ public enum TextDisplay {
         let head = kept - tail
         return "\(flattened.prefix(head))\(ellipsis)\(flattened.suffix(tail))"
     }
+
+    /// Arabic script blocks: the main one, the supplements, and the two
+    /// presentation-forms blocks that some applications hand back.
+    private static let arabicScalarRanges: [ClosedRange<UInt32>] = [
+        0x0600...0x06FF, 0x0750...0x077F, 0x08A0...0x08FF, 0xFB50...0xFDFF, 0xFE70...0xFEFF,
+    ]
+
+    /// True when the letters in `text` are mostly Arabic.
+    ///
+    /// Used to lay the suggestion card out right-to-left. Dominance rather than
+    /// presence: a wrong-layout fix is almost entirely one script, but the
+    /// trailing separator and any digits the user typed are shared between the
+    /// two, and a single stray character should not flip the whole card.
+    public static func isRightToLeftDominant(_ text: String) -> Bool {
+        var rightToLeft = 0
+        var leftToRight = 0
+        for character in text where character.isLetter {
+            guard let scalar = character.unicodeScalars.first else { continue }
+            if arabicScalarRanges.contains(where: { $0.contains(scalar.value) }) {
+                rightToLeft += 1
+            } else {
+                leftToRight += 1
+            }
+        }
+        return rightToLeft > leftToRight
+    }
 }

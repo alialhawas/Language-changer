@@ -3,6 +3,23 @@ import Carbon.HIToolbox
 import DodomaCore
 import Foundation
 
+/// Everything the suggestion panel needs to draw itself and to find the caret.
+struct SuggestionOffer {
+    let fix: Fix
+    /// The application the fix is for. The caret lookup needs it; the panel
+    /// controller passes it straight through to the accessibility layer.
+    let pid: pid_t?
+}
+
+/// The offer as the pipeline remembers it, which is more than the panel needs.
+private struct PendingSuggestion {
+    let fix: Fix
+    let bundleID: String?
+    /// The input serial at the moment the offer was made. An acceptance is only
+    /// valid while this has not moved.
+    let serial: UInt64
+}
+
 /// Thin app-side shell around `TypingSession`.
 ///
 /// Responsibilities kept here (and only here): the serial queue, the AppKit
@@ -28,9 +45,15 @@ final class TypingPipeline {
     var onAutoApply: ((AppliedFix) -> Void)?
     /// Called on `queue` when a fix was good enough to offer but not to apply,
     /// either because the app is suggest-only, because the scores were middling
-    /// or because the caret could not be verified. M6 turns this into the
-    /// suggestion panel; the `Fix` is everything that panel needs.
-    var onSuggest: ((Fix) -> Void)?
+    /// or because the caret could not be verified.
+    var onSuggest: ((SuggestionOffer) -> Void)?
+    /// Called on `queue` when the panel must come down. Every dismissal except
+    /// the panel's own timeout starts here, because every one of them is a
+    /// consequence of something only this queue can see.
+    var onHideSuggestion: (() -> Void)?
+    /// Called on `queue` when an accepted suggestion was not applied after all
+    /// — the caret no longer matches, or the field turned out to be secure.
+    var onSuggestionRejected: (() -> Void)?
 
     /// Shared, cached view of the enabled keyboard layouts. Owned here because
     /// this is where the invalidation notification is observed.
@@ -41,7 +64,11 @@ final class TypingPipeline {
     private let settings: SettingsStore
     private let frontmost: FrontmostAppTracker
     private let secureInput: SecureInputMonitor
-    private let focusOracle = FocusOracle()
+    /// Shared with the suggestion controller: the caret lookup and the security
+    /// check must queue behind one another rather than race on two queues.
+    let focusOracle = FocusOracle()
+    /// Written by the panel controller, read here and on the tap thread.
+    private let suggestionState: SuggestionState
 
     /// Queue-confined state.
     private var pendingEvaluation: DispatchWorkItem?
@@ -70,6 +97,13 @@ final class TypingPipeline {
     private var lastDecision: DecisionSnapshot?
     /// The single history slot M7 grows into `FixHistory`. Queue-confined.
     private(set) var lastAppliedFix: AppliedFix?
+    /// The suggestion currently on offer, if any. Queue-confined, and the
+    /// authority on whether there is one: the shared `SuggestionState` says
+    /// whether a *window* is on screen, which lags this by one main-thread hop.
+    private var pendingSuggestion: PendingSuggestion?
+    /// Region texts turned down recently, so a dismissal is not undone by the
+    /// next quiet period. Queue-confined.
+    private var suppression = SuggestionSuppression()
 
     private var frontmostObserver: UUID?
     private var inputSourceObserver: NSObjectProtocol?
@@ -79,11 +113,13 @@ final class TypingPipeline {
     init(
         settings: SettingsStore = .shared,
         frontmost: FrontmostAppTracker,
-        secureInput: SecureInputMonitor
+        secureInput: SecureInputMonitor,
+        suggestionState: SuggestionState
     ) {
         self.settings = settings
         self.frontmost = frontmost
         self.secureInput = secureInput
+        self.suggestionState = suggestionState
         self.paused = settings.paused
         self.secureInputActive = secureInput.isEnabled
         frontmostPolicy = settings.policy(for: frontmost.bundleID)
@@ -153,6 +189,7 @@ final class TypingPipeline {
             self?.captureActive = false
             self?.isGating = false
             self?.cancelTrigger()
+            self?.dismissSuggestion("the pipeline is shutting down", remember: false)
         }
     }
 
@@ -162,7 +199,10 @@ final class TypingPipeline {
         queue.async { [weak self] in
             guard let self, self.captureActive != active else { return }
             self.captureActive = active
-            if !active { self.cancelTrigger() }
+            if !active {
+                self.cancelTrigger()
+                self.dismissSuggestion("capture stopped", remember: false)
+            }
         }
     }
 
@@ -200,6 +240,9 @@ final class TypingPipeline {
         dispatchPrecondition(condition: .onQueue(queue))
         Log.pipeline.info("capture suspended: \(description, privacy: .public)")
         cancelTrigger()
+        // Not remembered as a refusal: the user did not turn this down, and a
+        // pause should not poison the next minute of suggestions.
+        dismissSuggestion("capture suspended", remember: false)
         // A gate resolving after this must not act on a decision taken before.
         inputs.bump()
         resetBuffer(reason: reason)
@@ -207,11 +250,34 @@ final class TypingPipeline {
 
     /// Must be called on `queue`. Called by the event tap.
     func handle(_ event: TapEvent) {
+        dispatchPrecondition(condition: .onQueue(queue))
         switch event {
         case .key(let key):
             process(.key(key))
-        case .mouseDown:
-            process(.mouseDown(at: Self.now()))
+
+        case .mouseDown(let location):
+            // A click on the card is the second way to accept, and it must not
+            // be treated as input first: the ordinary mouse-down path bumps the
+            // input serial, which would make the acceptance it is *part of*
+            // invalid. The test is done here rather than in the tap callback so
+            // the tap does no arithmetic.
+            let panel = suggestionState.snapshot
+            switch SuggestionKeys.mouseDisposition(
+                visible: panel.visible && pendingSuggestion != nil,
+                panelFrame: panel.panelFrame,
+                location: location)
+            {
+            case .accept:
+                acceptSuggestion()
+            case .pass, .dismissAndPass:
+                process(.mouseDown(at: Self.now()))
+            }
+
+        case .suggestionAccept:
+            acceptSuggestion()
+
+        case .suggestionDismiss:
+            dismissSuggestion("the user pressed escape")
         }
     }
 
@@ -230,6 +296,13 @@ final class TypingPipeline {
         // buffer still reached the screen, and that is exactly what the
         // in-flight work needs to know about.
         inputs.bump()
+
+        // Every kind of input invalidates an open suggestion — a keystroke and
+        // a click because the text moved, an application switch and a layout
+        // change because the fix was about somewhere else. This is also the
+        // path that covers the gap between the offer and the panel actually
+        // appearing, when the tap does not yet know there is one.
+        dismissSuggestion("input arrived")
 
         if isSuppressed, Self.isTypingSignal(input) {
             // Not "ignored": never seen. While the pause is on, secure input is
@@ -512,15 +585,178 @@ final class TypingPipeline {
 
         case .suggest:
             guard let fix = decision.fix else { break }
-            // M6 shows a panel here; for now the status item just blinks.
-            Log.pipeline.info(
-                "suggestion available: delete \(fix.deleteCount, privacy: .public) clusters (no panel until M6)"
-            )
-            onSuggest?(fix)
+            offerSuggestion(fix, bundleID: bundleID, serial: serial)
 
         case .autoApply:
             guard let fix = decision.fix else { break }
             beginApply(fix, bundleID: bundleID, verifiedAt: serial)
+
+        case .nothing:
+            break
+        }
+    }
+
+    // MARK: - Suggestions
+
+    /// Raises the panel, unless the same text was turned down here recently.
+    ///
+    /// - Parameter serial: the input serial the decision was taken at, and the
+    ///   token the eventual acceptance is validated against. It is the gate's
+    ///   serial, which `resolveGate` has just confirmed has not moved.
+    private func offerSuggestion(_ fix: Fix, bundleID: String?, serial: UInt64) {
+        dispatchPrecondition(condition: .onQueue(queue))
+
+        // One offer at a time. Reaching here with one already open takes an
+        // input the panel never saw, so it is not a refusal and is not
+        // remembered as one.
+        dismissSuggestion("superseded by a newer suggestion", remember: false)
+
+        let now = Self.now()
+        guard !suppression.isSuppressed(text: fix.replacedText, bundleID: bundleID, at: now) else {
+            // The buffer is not reset by a dismissal — the text really is still
+            // in front of the caret — so without this the same offer comes back
+            // one second later, indefinitely.
+            Log.pipeline.debug("suggestion withheld: the same text was dismissed here recently")
+            return
+        }
+
+        pendingSuggestion = PendingSuggestion(fix: fix, bundleID: bundleID, serial: serial)
+        Log.pipeline.info(
+            "suggesting: replace \(fix.deleteCount, privacy: .public) clusters with \(fix.insertText.count, privacy: .public)"
+        )
+        onSuggest?(
+            SuggestionOffer(fix: fix, pid: frontmost.current.processIdentifier))
+    }
+
+    /// Takes the panel down and remembers the refusal. A no-op when nothing is
+    /// on offer, which is what makes it safe to call from `process`.
+    private func dismissSuggestion(_ reason: String, remember: Bool = true) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let pending = pendingSuggestion else { return }
+        pendingSuggestion = nil
+        // Cleared here as well as by the controller: the controller's copy is
+        // one main-thread hop away, and for the length of that hop the tap
+        // would go on swallowing the panel's keys for a panel that has already
+        // been decided against.
+        suggestionState.hide()
+
+        if remember {
+            suppression.record(
+                text: pending.fix.replacedText, bundleID: pending.bundleID, at: Self.now())
+        }
+        Log.pipeline.debug("suggestion dismissed: \(reason, privacy: .public)")
+        onHideSuggestion?()
+    }
+
+    /// The panel timed out on its own. Callable from any thread.
+    func suggestionTimedOut() {
+        queue.async { [weak self] in
+            // The panel has already taken itself off the screen; this only
+            // records the refusal, so nothing is hidden a second time.
+            self?.dismissSuggestion("timed out", remember: true)
+        }
+    }
+
+    /// Queue-confined. Reached from the swallowed accept key and from a click
+    /// on the card.
+    private func acceptSuggestion() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let pending = pendingSuggestion else { return }
+        pendingSuggestion = nil
+        suggestionState.hide()
+        onHideSuggestion?()
+
+        switch SuggestionKeys.acceptance(
+            pendingSerial: pending.serial, currentSerial: inputs.current)
+        {
+        case .apply:
+            break
+        case .stale, .gone:
+            // Typing while the panel is up is an implicit refusal, and the two
+            // signals can cross on the way to this queue. The span the fix
+            // would delete is no longer the span it was computed from, so the
+            // only safe reading is the refusal.
+            Log.pipeline.info("suggestion not applied: input arrived after the panel appeared")
+            suppression.record(
+                text: pending.fix.replacedText, bundleID: pending.bundleID, at: Self.now())
+            return
+        }
+
+        guard captureActive, !isSuppressed, !isApplying, !isGating else {
+            Log.pipeline.info("suggestion not applied: the pipeline is busy or suspended")
+            return
+        }
+        beginAcceptGate(pending)
+    }
+
+    /// The accepted fix goes through the same accessibility gate as an
+    /// auto-apply, for the same reason: the user asked for the text in front of
+    /// the caret to be replaced, and if the screen does not match what we think
+    /// is there, the delete burst removes somebody else's characters. An
+    /// explicit request is not evidence about the screen.
+    private func beginAcceptGate(_ pending: PendingSuggestion) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        isGating = true
+        cancelTrigger()
+
+        let serial = pending.serial
+        let caretTextLength =
+            settings.skipsAXVerify(pending.bundleID)
+            ? nil : pending.fix.replacedText.utf16.count
+
+        focusOracle.inspect(
+            pid: frontmost.current.processIdentifier,
+            caretTextLength: caretTextLength
+        ) { [weak self] focus in
+            guard let self else { return }
+            self.queue.async {
+                self.resolveAccept(
+                    focus, pending: pending, verified: caretTextLength != nil, serial: serial)
+            }
+        }
+    }
+
+    private func resolveAccept(
+        _ focus: FocusInspection, pending: PendingSuggestion, verified: Bool, serial: UInt64
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard isGating else { return }
+        isGating = false
+
+        guard !inputs.hasMoved(since: serial) else {
+            Log.pipeline.info("accepted fix abandoned: input arrived during the caret check")
+            return
+        }
+
+        let verification =
+            verified
+            ? CaretVerification.verdict(
+                axText: focus.caretText, replacedText: pending.fix.replacedText)
+            : .proceed
+
+        // The same rule the automatic path is resolved by, given the same
+        // inputs, so the two cannot drift apart.
+        switch SafetyGate.resolve(
+            decision: .autoApply(pending.fix), secureField: focus.security,
+            verification: verification)
+        {
+        case .autoApply:
+            beginApply(
+                pending.fix, bundleID: pending.bundleID, verifiedAt: serial, accepted: true)
+
+        case .drop(let reason):
+            Log.pipeline.info("accepted fix dropped: \(reason, privacy: .public)")
+            resetBuffer(reason: .secureInput)
+            onSuggestionRejected?()
+
+        case .suggest(let downgradedFrom):
+            // Re-offering would be a loop: the same check would fail again. The
+            // user asked, the screen does not match, and saying so is the only
+            // honest outcome.
+            Log.fix.info(
+                "accepted fix abandoned: \(downgradedFrom ?? "the caret could not be verified", privacy: .public)"
+            )
+            onSuggestionRejected?()
 
         case .nothing:
             break
@@ -533,12 +769,17 @@ final class TypingPipeline {
     ///   taken at. The injector re-checks it after its modifier pre-flight,
     ///   which is the only part of the sequence long enough for the screen to
     ///   have changed since.
-    private func beginApply(_ fix: Fix, bundleID: String?, verifiedAt: UInt64) {
+    /// - Parameter accepted: the fix was asked for from the suggestion panel
+    ///   rather than decided on automatically. Only the log line differs; the
+    ///   sequence, its guards and its aftermath are identical by design.
+    private func beginApply(
+        _ fix: Fix, bundleID: String?, verifiedAt: UInt64, accepted: Bool = false
+    ) {
         isApplying = true
         droppedInputDuringApply = false
         cancelTrigger()
         Log.fix.info(
-            "auto-applying: delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
+            "\(accepted ? "applying an accepted suggestion" : "auto-applying", privacy: .public): delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
         )
 
         let inputs = self.inputs

@@ -6,13 +6,26 @@ import Foundation
 /// no `CGEvent` ever escapes the tap thread.
 enum TapEvent {
     case key(CapturedKey)
-    case mouseDown
+    /// - Parameter at: the pointer in display coordinates, as `CGEvent` reports
+    ///   it. The pipeline needs it to tell a click on the suggestion card from
+    ///   a click anywhere else.
+    case mouseDown(at: CGPoint)
+    /// The accept key, consumed by the tap while a suggestion is on screen.
+    /// Deliberately not a `.key`: it never reaches the typed buffer, and it must
+    /// not move the input serial the acceptance is validated against.
+    case suggestionAccept
+    /// Likewise for the dismiss key.
+    case suggestionDismiss
 }
 
 /// Owns the session-wide `CGEventTap` and pumps it on a dedicated run loop thread.
 ///
-/// The tap is a *listener*: every event is passed straight through unmodified.
-/// Nothing is consumed and nothing is injected.
+/// The tap is very nearly a listener: every event is passed straight through
+/// unmodified, with exactly one exception. While a suggestion panel is on
+/// screen, the accept and dismiss keys are consumed, because they are the
+/// panel's keys for as long as it is up and letting a Tab through as well would
+/// move focus in the application underneath. Nothing else is ever consumed, and
+/// the exception switches itself off if the watchdog trips.
 final class EventTapController {
     /// Marker written into `.eventSourceUserData` of events Dodoma itself will
     /// post in a later milestone. Events carrying it are ignored here so the
@@ -28,6 +41,18 @@ final class EventTapController {
 
     private let queue: DispatchQueue
     private let handler: (TapEvent) -> Void
+    /// Read from the tap thread on every keystroke. One lock, three fields.
+    private let suggestion: SuggestionState
+
+    /// Called on the tap thread the first time the watchdog trips. The caller
+    /// is responsible for hopping to the main thread. Immutable, like `handler`,
+    /// so the tap thread cannot read it while the main thread assigns it.
+    private let onDegraded: () -> Void
+    /// Set once and never cleared: a tap that has been disabled twice in a
+    /// minute is a tap the system is unhappy with, and consuming input is the
+    /// part of what we do that is most likely to be making that worse. A restart
+    /// clears it.
+    private var degraded = false
 
     /// `tap`, `runLoopSource`, `runLoop`, `thread` and `running` are shared
     /// between the main thread (start/stop) and the tap thread (run loop body
@@ -53,9 +78,19 @@ final class EventTapController {
 
     /// - Parameters:
     ///   - queue: serial queue the captured events are delivered on.
+    ///   - suggestion: the shared panel state, read on the tap thread.
+    ///   - onDegraded: invoked on the tap thread the first time the watchdog
+    ///     trips.
     ///   - handler: invoked on `queue` for every captured event.
-    init(queue: DispatchQueue, handler: @escaping (TapEvent) -> Void) {
+    init(
+        queue: DispatchQueue,
+        suggestion: SuggestionState,
+        onDegraded: @escaping () -> Void = {},
+        handler: @escaping (TapEvent) -> Void
+    ) {
         self.queue = queue
+        self.suggestion = suggestion
+        self.onDegraded = onDegraded
         self.handler = handler
     }
 
@@ -209,10 +244,10 @@ final class EventTapController {
             handleTapDisabled(cause: "userInput")
             return nil
         case .keyDown:
-            handleKeyDown(event)
+            if handleKeyDown(event) { return nil }
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             if !isSelfInjected(event) {
-                deliver(.mouseDown)
+                deliver(.mouseDown(at: event.location))
             }
         default:
             break
@@ -232,20 +267,54 @@ final class EventTapController {
             Log.tap.fault(
                 "event tap disabled \(self.disableTimestamps.count, privacy: .public) times in \(Int(Self.watchdogWindow), privacy: .public)s (cause=\(cause, privacy: .public)); re-enabled"
             )
+            degrade()
         } else {
             Log.tap.error("event tap disabled (cause=\(cause, privacy: .public)); re-enabled")
         }
     }
 
-    private func handleKeyDown(_ event: CGEvent) {
-        guard !isSelfInjected(event) else { return }
+    /// Stops consuming events for the rest of the session.
+    ///
+    /// The suggestion panel keeps working — it is a window, not an event
+    /// interception — and is accepted by clicking it. What stops is the tap
+    /// returning nil for anything, which is the only behaviour that could turn
+    /// a sick tap into lost keystrokes.
+    private func degrade() {
+        guard !degraded else { return }
+        degraded = true
+        suggestion.setConsumesKeys(false)
+        Log.tap.fault(
+            "event consumption disabled after the watchdog tripped; suggestions are click-only")
+        onDegraded()
+    }
+
+    /// - Returns: true when the event must be swallowed.
+    private func handleKeyDown(_ event: CGEvent) -> Bool {
+        guard !isSelfInjected(event) else { return false }
 
         let keycode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
 
         // Autorepeat floods the pipeline with duplicates of the same character.
         // Backspace is the exception: held-down deletes must shrink the buffer.
         let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        if isAutorepeat && keycode != Keycode.delete { return }
+        if isAutorepeat && keycode != Keycode.delete { return false }
+
+        let panel = suggestion.snapshot
+        switch SuggestionKeys.disposition(
+            visible: panel.visible, consumesKeys: panel.consumesKeys, keycode: keycode)
+        {
+        case .swallowAndAccept:
+            deliver(.suggestionAccept)
+            return true
+        case .swallowAndDismiss:
+            deliver(.suggestionDismiss)
+            return true
+        case .pass, .dismissAndPass:
+            // Real typing either way. `dismissAndPass` differs only in that the
+            // pipeline will take the panel down when this key reaches it, which
+            // it does for every input regardless.
+            break
+        }
 
         let keyboardType = UInt32(
             truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeyboardType))
@@ -258,6 +327,7 @@ final class EventTapController {
             timestamp: Date().timeIntervalSinceReferenceDate
         )
         deliver(.key(captured))
+        return false
     }
 
     private func isSelfInjected(_ event: CGEvent) -> Bool {

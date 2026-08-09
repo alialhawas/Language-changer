@@ -105,9 +105,7 @@ screen, it deletes the offending text, types the corrected text in its place and
 switches the keyboard layout, then flashes `⇄ ع/E` in the menu bar and records a
 `Last fix:` line in the menu.
 
-- A weaker match is only offered, not applied. The suggestion panel is M6, so
-  for now the status item blinks `?` and the verdict appears in the debug
-  window's Decisions section.
+- A weaker match is only offered, not applied. See *Suggestions* below.
 - Nothing is injected while Shift, Command, Control or Option is held; the fix
   is retried three times and then abandoned. Caps Lock is not a blocker — it is
   how most of this text gets typed in the first place.
@@ -117,6 +115,40 @@ switches the keyboard layout, then flashes `⇄ ع/E` in the menu bar and record
   all, the automatic fix is downgraded to a suggestion instead. Applications
   with no usable accessibility text — some terminals and web views — therefore
   suggest rather than rewrite.
+
+## Suggestions
+
+Everything that is worth offering but not worth doing silently appears as a
+small floating card next to the caret: borderline scores, applications set to
+*Suggest only*, and automatic fixes downgraded because the caret could not be
+verified. The card shows the proposed text, the text it would replace struck
+through, and the two keys.
+
+- **⇥ replaces** the text and switches the layout, by exactly the same route as
+  an automatic fix — including reading the caret back first. If the text in
+  front of the caret is not what the fix was computed from, nothing is deleted
+  and the menu bar flashes `✕`. An application that reports no accessibility
+  text at all therefore cannot have a suggestion accepted; the only way round it
+  is to add its bundle identifier to `axVerifySkip` in the settings blob, which
+  trades the check for the convenience and is not done for you.
+- **Clicking the card** does the same thing.
+- **Esc**, typing anything else, clicking elsewhere, switching application, or
+  four seconds of nothing all put the card away. Tab and Esc are consumed only
+  while a card is on screen; every other key goes through untouched and lands in
+  the application as usual.
+- A card that was turned down is not offered again for the same text in the same
+  application for a minute.
+- The panel never takes keyboard focus. The menu bar does not change, and typing
+  continues into whatever you were typing into.
+- If the event tap is disabled by the system twice inside a minute, Dodoma stops
+  consuming events for the rest of the session: the menu reads
+  `Active (capturing) — degraded, click suggestions to accept`, ⇥ and Esc go back
+  to being the application's keys, and cards are accepted by clicking them.
+
+The card is positioned from the caret where the application reports one, and
+otherwise from the focused control, the focused window, the pointer or the
+screen, in that order. It is clamped to the display it lands on, works on a
+second display, and shows over full-screen applications.
 
 ## Safety
 

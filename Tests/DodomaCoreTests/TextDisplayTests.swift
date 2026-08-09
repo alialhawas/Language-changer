@@ -54,3 +54,36 @@ final class TextDisplayTests: XCTestCase {
         XCTAssertTrue(result.contains(TextDisplay.ellipsis))
     }
 }
+
+/// Which way the suggestion card is laid out, and which corner it hangs from.
+final class TextDirectionTests: XCTestCase {
+    func testArabicTextIsRightToLeft() {
+        XCTAssertTrue(TextDisplay.isRightToLeftDominant("اذ ودك انا اسويها اليوم"))
+        XCTAssertTrue(TextDisplay.isRightToLeftDominant("ودك"))
+    }
+
+    func testLatinTextIsNot() {
+        XCTAssertFalse(TextDisplay.isRightToLeftDominant("hgsghl"))
+        XCTAssertFalse(TextDisplay.isRightToLeftDominant("if you want me to do it today"))
+    }
+
+    /// Dominance, not presence: a wrong-layout fix carries the separators and
+    /// digits the user typed, and those are shared between the two scripts.
+    func testAStrayCharacterDoesNotFlipTheCard() {
+        XCTAssertTrue(TextDisplay.isRightToLeftDominant("اذ ودك انا اسويها ok"))
+        XCTAssertFalse(TextDisplay.isRightToLeftDominant("send this to اسم now please"))
+    }
+
+    func testTextWithNoLettersAtAllReadsLeftToRight() {
+        XCTAssertFalse(TextDisplay.isRightToLeftDominant(""))
+        XCTAssertFalse(TextDisplay.isRightToLeftDominant("123 !? ..."))
+        XCTAssertFalse(TextDisplay.isRightToLeftDominant("   "))
+    }
+
+    /// Some applications hand back the presentation forms rather than the base
+    /// letters, and a card laid out the wrong way for those would be a puzzle
+    /// to diagnose.
+    func testArabicPresentationFormsCountAsArabic() {
+        XCTAssertTrue(TextDisplay.isRightToLeftDominant("\u{FEDF}\u{FEE0}\u{FEE1}"))
+    }
+}

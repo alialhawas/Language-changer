@@ -79,6 +79,42 @@ final class FocusOracle {
         }
     }
 
+    /// Finds the caret of `pid` for the suggestion panel, under the same three
+    /// limits as `inspect`: this queue, the per-element messaging timeout, and
+    /// one deadline over the whole lookup. Answers exactly once.
+    ///
+    /// The deadline's answer is not a failure but the pointer, because the
+    /// panel has to appear somewhere and the pointer is where the user is
+    /// looking. `CaretLocator` documents the rest of the ladder.
+    ///
+    /// - Parameter geometry: taken on the main thread by the caller. Nothing in
+    ///   here may touch `NSScreen`.
+    func locateCaret(
+        pid: pid_t?,
+        geometry: ScreenGeometry,
+        rightToLeftText: Bool,
+        completion: @escaping (CaretAnchor) -> Void
+    ) {
+        let once = Once(completion)
+        guard let pid else {
+            once.fire(geometry.pointerAnchor)
+            return
+        }
+
+        let expiry = DispatchWorkItem { [once] in
+            Log.pipeline.debug("caret lookup hit its deadline")
+            once.fire(geometry.pointerAnchor)
+        }
+        timeoutQueue.asyncAfter(deadline: .now() + Self.deadline, execute: expiry)
+
+        queue.async {
+            let anchor = CaretLocator.locate(
+                pid: pid, geometry: geometry, rightToLeftText: rightToLeftText)
+            expiry.cancel()
+            once.fire(anchor)
+        }
+    }
+
     /// Forgets the cached verdict. Called when the frontmost app changes: the
     /// focused element belongs to the app that had focus.
     func invalidate() {

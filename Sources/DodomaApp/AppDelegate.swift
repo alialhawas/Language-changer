@@ -6,9 +6,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var debugWindowController: DebugWindowController?
     private var pipeline: TypingPipeline?
     private var eventTap: EventTapController?
+    private var suggestionController: SuggestionController?
     private var pollTimer: Timer?
     private var lastState: PermissionState?
     private var lastCapturing = false
+    /// Set once, by the tap watchdog. Only the menu line reads it; the tap and
+    /// the panel take their own copy from `suggestionState`.
+    private var tapDegraded = false
 
     /// The single frontmost-app observer, shared by the pipeline (which needs
     /// the switch as a buffer-reset event), the injector (which re-checks
@@ -16,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let frontmost = FrontmostAppTracker()
     private let secureInput = SecureInputMonitor()
     private let settings = SettingsStore.shared
+    /// The one piece of state the event tap thread, the pipeline queue and the
+    /// main thread all touch. Created here so no one of the three owns it.
+    private let suggestionState = SuggestionState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
@@ -32,7 +39,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let pipeline = TypingPipeline(
-            settings: settings, frontmost: frontmost, secureInput: secureInput)
+            settings: settings, frontmost: frontmost, secureInput: secureInput,
+            suggestionState: suggestionState)
+
+        // The panel borrows the pipeline's accessibility oracle rather than
+        // making a second one: the caret lookup and the security check have to
+        // queue behind one another, and one serial queue is what guarantees it.
+        let suggestions = SuggestionController(
+            state: suggestionState, oracle: pipeline.focusOracle)
+        suggestionController = suggestions
+        suggestions.onTimeout = { [weak pipeline] in
+            pipeline?.suggestionTimedOut()
+        }
+
         pipeline.onChange = { [weak debugWindow] snapshot in
             debugWindow?.accept(snapshot)
         }
@@ -42,8 +61,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.onAutoApply = { [weak controller] applied in
             DispatchQueue.main.async { controller?.showAutoApply(applied) }
         }
-        pipeline.onSuggest = { [weak controller] _ in
-            DispatchQueue.main.async { controller?.showSuggestion() }
+        pipeline.onSuggest = { [weak suggestions] offer in
+            DispatchQueue.main.async { suggestions?.show(fix: offer.fix, pid: offer.pid) }
+        }
+        pipeline.onHideSuggestion = { [weak suggestions] in
+            DispatchQueue.main.async { suggestions?.dismiss() }
+        }
+        pipeline.onSuggestionRejected = { [weak controller] in
+            DispatchQueue.main.async { controller?.showSuggestionRejected() }
         }
         pipeline.start()
         self.pipeline = pipeline
@@ -69,9 +94,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.setSecureInput(secureInput.isEnabled)
         pipeline.apply(settings.settings)
 
-        eventTap = EventTapController(queue: pipeline.queue) { [weak pipeline] event in
-            pipeline?.handle(event)
-        }
+        eventTap = EventTapController(
+            queue: pipeline.queue,
+            suggestion: suggestionState,
+            onDegraded: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.tapDegraded = true
+                    self?.refreshPermissions()
+                }
+            },
+            handler: { [weak pipeline] event in
+                pipeline?.handle(event)
+            })
 
         Permissions.requestAccessibility()
         Permissions.requestInputMonitoring()
@@ -88,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         pollTimer?.invalidate()
         pollTimer = nil
+        suggestionController?.dismiss()
         secureInput.stop()
         eventTap?.stop()
         pipeline?.stop()
@@ -127,7 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let capturing = eventTap?.isRunning ?? false
 
         menuBarController?.update(
-            with: state, capturing: capturing, secureInput: secureInput.isEnabled)
+            with: state, capturing: capturing, secureInput: secureInput.isEnabled,
+            degraded: tapDegraded)
         // Detection — and therefore injection — only runs while the tap does.
         pipeline?.setCaptureActive(capturing && state.accessibility && state.inputMonitoring)
 

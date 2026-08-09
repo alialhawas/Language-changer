@@ -7,9 +7,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private static let flashDuration: TimeInterval = 1.5
     /// Title shown while a fix is being applied.
     private static let autoApplyFlash = "⇄ ع/E"
-    /// Title shown when a fix was offered rather than applied (M6 replaces
-    /// this with the suggestion panel).
-    private static let suggestFlash = "?"
+    /// Title shown when the user accepted a suggestion but the text in front of
+    /// the caret turned out not to be what the fix was computed from. Applying
+    /// it anyway would delete the wrong characters, so nothing happens and the
+    /// refusal has to be visible — otherwise the accept key looks broken.
+    private static let rejectedFlash = "✕"
     /// Longest each field of the "Last fix" line may be before it is
     /// middle-ellipsised.
     private static let fieldLimit = 20
@@ -75,9 +77,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem.menu = makeMenu()
     }
 
-    func update(with state: PermissionState, capturing: Bool, secureInput: Bool) {
+    func update(with state: PermissionState, capturing: Bool, secureInput: Bool, degraded: Bool) {
         statusLineItem.title = Self.statusText(
-            for: state, capturing: capturing, paused: settings.paused, secureInput: secureInput)
+            for: state, capturing: capturing, paused: settings.paused, secureInput: secureInput,
+            degraded: degraded)
         pauseItem.state = settings.paused ? .on : .off
     }
 
@@ -94,9 +97,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         lastFixItem.isHidden = false
     }
 
-    /// Main thread only. M6 replaces this with the suggestion panel.
-    func showSuggestion() {
-        flash(Self.suggestFlash)
+    /// Main thread only.
+    func showSuggestionRejected() {
+        flash(Self.rejectedFlash)
     }
 
     static func lastFixText(replaced: String, inserted: String, app: String, at date: Date)
@@ -123,14 +126,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private static func statusText(
-        for state: PermissionState, capturing: Bool, paused: Bool, secureInput: Bool
+        for state: PermissionState, capturing: Bool, paused: Bool, secureInput: Bool,
+        degraded: Bool
     ) -> String {
         // Permissions first: without them nothing else in this line is true.
         if !state.accessibility { return "Needs Accessibility permission" }
         if !state.inputMonitoring { return "Needs Input Monitoring permission" }
         if paused { return "Paused" }
         if secureInput { return "Paused — secure input" }
-        return capturing ? "Active (capturing)" : "Active"
+        let base = capturing ? "Active (capturing)" : "Active"
+        // The watchdog has switched off event consumption for the session, so
+        // the accept key no longer works and the user needs to be told why
+        // clicking is now the only way to take a suggestion.
+        return degraded ? "\(base) — degraded, click suggestions to accept" : base
     }
 
     // MARK: - Menu
