@@ -5,15 +5,27 @@ import Foundation
 /// What the accessibility API had to say about the focused element.
 struct FocusInspection: Equatable {
     var security: SecureFieldState
-    /// The text immediately before the caret, when it was asked for and could
-    /// be read. Nil otherwise — including whenever `security` is not
-    /// `.notSecure`, because a password field's contents are never read.
-    var caretText: String?
+    /// The text immediately before the caret, and — just as importantly — why
+    /// it is missing when it is. `.unavailable` whenever the read was not asked
+    /// for at all, and whenever `security` is not `.notSecure`, because a
+    /// password field's contents are never read.
+    var caretRead: CaretRead
 
     /// The answer when nothing could be asked: no pid, no grant, or the
     /// deadline expired. The two fields fail in opposite directions on purpose
     /// — see `SafetyGate`.
-    static let unavailable = FocusInspection(security: .unknown, caretText: nil)
+    static let unavailable = FocusInspection(security: .unknown, caretRead: .unavailable)
+}
+
+/// The half of `FocusOracle` the typing pipeline uses.
+///
+/// A protocol so the pipeline's gate can be driven from tests without an
+/// accessibility grant, a focused element or a real application to ask. The
+/// panel's caret lookup deliberately stays off it: that is the concrete
+/// oracle's business and nothing decides anything destructive on it.
+protocol FocusInspecting: AnyObject {
+    func inspect(pid: pid_t?, caretTextLength: Int?, completion: @escaping (FocusInspection) -> Void)
+    func invalidate()
 }
 
 /// Reads the focused UI element over the accessibility API.
@@ -151,10 +163,10 @@ final class FocusOracle {
 
         let security = cachedSecurity(of: focused)
         guard security == .notSecure, let caretTextLength else {
-            return FocusInspection(security: security, caretText: nil)
+            return FocusInspection(security: security, caretRead: .unavailable)
         }
         return FocusInspection(
-            security: security, caretText: caretText(of: focused, length: caretTextLength))
+            security: security, caretRead: caretRead(of: focused, length: caretTextLength))
     }
 
     /// A password field answers with the secure subrole. A few older Carbon and
@@ -180,38 +192,53 @@ final class FocusOracle {
         return security
     }
 
-    /// The `length` UTF-16 units immediately before the caret.
+    /// The `length` UTF-16 units immediately before the caret, or why not.
     ///
     /// The caret is read first, from the selected-text range, and everything is
     /// measured back from it. Reading the element's whole value and taking its
     /// suffix would be wrong whenever the caret is not at the end of the field,
-    /// which is exactly the desynchronisation this check exists to catch — so
-    /// a field that will not report a caret gets nil, and the caller downgrades.
-    private func caretText(of element: AXUIElement, length: Int) -> String? {
-        guard length > 0, let selection = range(element, kAXSelectedTextRangeAttribute) else {
-            return nil
+    /// which is exactly the desynchronisation this check exists to catch.
+    ///
+    /// What the caller does with each answer is `CaretVerification`'s business.
+    /// This function's only job is to keep the reasons apart, and in particular
+    /// to keep `.unreadable` — "this element has no text to give anybody" —
+    /// away from `.unavailable`, which means "it has text and would not hand it
+    /// over". Only the first is a safe thing for an explicitly requested
+    /// rewrite to proceed on.
+    private func caretRead(of element: AXUIElement, length: Int) -> CaretRead {
+        guard length > 0 else { return .unavailable }
+
+        guard let selection = range(element, kAXSelectedTextRangeAttribute) else {
+            // No caret. An element that also has no value is not a text field
+            // we can reason about at all — a terminal surface, a canvas — and
+            // that is the structural silence `.unreadable` names. One that does
+            // have a value but will not say where the caret is cannot be
+            // measured back from, which is a refusal, not a silence.
+            return string(element, kAXValueAttribute) == nil ? .unreadable : .unavailable
         }
         // A live selection means the delete burst would eat the selection
         // first, so the count no longer describes what would be removed.
-        guard selection.length == 0 else { return nil }
+        guard selection.length == 0 else { return .selectionPresent }
 
         let caret = selection.location
-        guard caret >= 0 else { return nil }
+        guard caret >= 0 else { return .unavailable }
         let wanted = min(caret, length)
         var wantedRange = CFRange(location: caret - wanted, length: wanted)
 
         if let argument = AXValueCreate(.cfRange, &wantedRange),
            let text = string(element, kAXStringForRangeParameterizedAttribute, parameter: argument)
         {
-            return text
+            return .value(text)
         }
 
         // Fields that expose a value but no parameterized string attribute —
         // plain AXTextField mostly — can still be cut at the caret by hand.
-        guard let value = string(element, kAXValueAttribute) else { return nil }
+        // Anything past here answered a caret and then would not produce the
+        // text behind it, which is the noisy kind of failure.
+        guard let value = string(element, kAXValueAttribute) else { return .unavailable }
         let units = Array(value.utf16)
-        guard caret <= units.count else { return nil }
-        return String(decoding: units[(caret - wanted)..<caret], as: UTF16.self)
+        guard caret <= units.count else { return .unavailable }
+        return .value(String(decoding: units[(caret - wanted)..<caret], as: UTF16.self))
     }
 
     // MARK: - Attribute helpers
@@ -251,6 +278,8 @@ final class FocusOracle {
         return range
     }
 }
+
+extension FocusOracle: FocusInspecting {}
 
 /// Fires its handler exactly once, whoever gets there first.
 private final class Once<Value> {

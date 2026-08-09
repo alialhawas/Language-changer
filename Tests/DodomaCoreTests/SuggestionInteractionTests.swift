@@ -225,14 +225,45 @@ final class SuggestionSuppressionTests: XCTestCase {
         XCTAssertEqual(set.count, 1, "everything older than the window went")
     }
 
-    /// The separator has to be something neither a bundle identifier nor typed
-    /// text can contain, or two different pairs could share one key.
+    /// The key is a pair of fields, not a concatenation, so no two (app, text)
+    /// pairs can be made to collide by moving the boundary between them.
     func testTheKeyCannotBeForgedByConcatenation() {
-        XCTAssertNotEqual(
-            SuggestionSuppression.key(text: "b", bundleID: "a"),
-            SuggestionSuppression.key(text: "", bundleID: "ab"))
         var set = SuggestionSuppression()
         set.record(text: "b", bundleID: "a", at: 0)
         XCTAssertFalse(set.isSuppressed(text: "", bundleID: "ab", at: 0))
+        XCTAssertFalse(set.isSuppressed(text: "ab", bundleID: "", at: 0))
+    }
+
+    // MARK: - The undo half
+
+    /// What the guard input is built from after an undo.
+    func testTextsReturnsOnlyTheLiveEntriesForOneApplication() {
+        var set = SuggestionSuppression()
+        set.record(text: "hgsghl ", bundleID: chat, at: 100)
+        set.record(text: "hkh", bundleID: chat, at: 100)
+        set.record(text: "elsewhere", bundleID: editor, at: 100)
+
+        XCTAssertEqual(set.texts(bundleID: chat, at: 101), ["hgsghl ", "hkh"])
+        XCTAssertEqual(set.texts(bundleID: editor, at: 101), ["elsewhere"])
+        XCTAssertEqual(set.texts(bundleID: nil, at: 101), [])
+    }
+
+    func testTextsExpiresWithTheWindow() {
+        var set = SuggestionSuppression()
+        set.record(text: "hgsghl", bundleID: chat, at: 100)
+        XCTAssertEqual(set.texts(bundleID: chat, at: 159.9), ["hgsghl"])
+        XCTAssertEqual(
+            set.texts(bundleID: chat, at: 100 + SuggestionSuppression.window), [],
+            "the same boundary as isSuppressed")
+    }
+
+    /// The undone text goes in exactly as `Fix.replacedText` holds it, trailing
+    /// separator and all, so that the offer check — which compares that same
+    /// string — matches. Trimming for the guard happens in `TextGuards`.
+    func testTheRecordedTextIsNotNormalised() {
+        var set = SuggestionSuppression()
+        set.record(text: "hgsghl ", bundleID: chat, at: 100)
+        XCTAssertTrue(set.isSuppressed(text: "hgsghl ", bundleID: chat, at: 101))
+        XCTAssertFalse(set.isSuppressed(text: "hgsghl", bundleID: chat, at: 101))
     }
 }

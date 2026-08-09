@@ -104,37 +104,62 @@ public enum SuggestionKeys {
     }
 }
 
-/// Region texts that have been offered and turned down recently.
+/// Region texts that Dodoma has been told, one way or another, to leave alone
+/// for a while.
 ///
-/// Without this, a dismissed suggestion comes straight back: the buffer is not
-/// reset by a dismissal — the text really is still on screen — so the next quiet
-/// period re-evaluates the same keys and reaches the same verdict, once a
-/// second, forever. Suppression is per application because the same word can be
-/// wrong in a chat window and deliberate in an editor.
+/// Two callers, one mechanism, because the failure they prevent is the same
+/// one. The buffer is not reset by a refusal — the text really is still on
+/// screen — so the next quiet period re-evaluates the same keys and reaches the
+/// same verdict, once a second, forever:
+///
+/// - a **dismissed suggestion** would come straight back as another card;
+/// - an **undone fix** would be re-applied within the second, which is the one
+///   outcome that would make undo worse than useless.
+///
+/// Suppression is per application because the same word can be wrong in a chat
+/// window and deliberate in an editor.
 public struct SuggestionSuppression: Equatable, Sendable {
-    /// How long a dismissal is remembered.
+    /// How long a refusal is remembered.
     public static let window: TimeInterval = 60
 
-    private var entries: [String: TimeInterval] = [:]
+    /// A struct rather than a concatenated string: two fields that can each
+    /// contain anything cannot be packed into one key without arguing about
+    /// separators, and the argument is only ever lost.
+    struct Entry: Hashable {
+        let bundleID: String?
+        let text: String
+    }
+
+    private var entries: [Entry: TimeInterval] = [:]
 
     public init() {}
 
     public var count: Int { entries.count }
 
-    /// The `\0` separator cannot occur in a bundle identifier, so no pair of
-    /// (text, app) can collide with another by concatenation.
-    public static func key(text: String, bundleID: String?) -> String {
-        "\(bundleID ?? "")\u{0}\(text)"
-    }
-
     public mutating func record(text: String, bundleID: String?, at now: TimeInterval) {
         prune(before: now)
-        entries[Self.key(text: text, bundleID: bundleID)] = now
+        entries[Entry(bundleID: bundleID, text: text)] = now
     }
 
     public func isSuppressed(text: String, bundleID: String?, at now: TimeInterval) -> Bool {
-        guard let recorded = entries[Self.key(text: text, bundleID: bundleID)] else { return false }
+        guard let recorded = entries[Entry(bundleID: bundleID, text: text)] else { return false }
         return now - recorded < Self.window
+    }
+
+    /// Everything still suppressed for one application, in the shape
+    /// `TextGuards.evaluate(_:currentModel:recentlyUndone:)` wants it.
+    ///
+    /// The guard is the second half of the undo suppression: this set stops the
+    /// text being offered again, and the guard stops the *detector* concluding
+    /// that it should be auto-applied again, which is a decision taken a layer
+    /// below the offer.
+    public func texts(bundleID: String?, at now: TimeInterval) -> Set<String> {
+        var live: Set<String> = []
+        for (entry, recorded) in entries
+        where entry.bundleID == bundleID && now - recorded < Self.window {
+            live.insert(entry.text)
+        }
+        return live
     }
 
     /// Drops expired entries. Called on every record, so the set cannot grow

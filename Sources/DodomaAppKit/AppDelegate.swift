@@ -1,12 +1,15 @@
 import AppKit
 import DodomaCore
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate {
+    public override init() { super.init() }
+
     private var menuBarController: MenuBarController?
     private var debugWindowController: DebugWindowController?
     private var pipeline: TypingPipeline?
     private var eventTap: EventTapController?
     private var suggestionController: SuggestionController?
+    private let hotkeys = HotkeyCenter()
     private var pollTimer: Timer?
     private var lastState: PermissionState?
     private var lastCapturing = false
@@ -24,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// main thread all touch. Created here so no one of the three owns it.
     private let suggestionState = SuggestionState()
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
 
         preloadLanguageModels()
@@ -67,11 +70,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.onHideSuggestion = { [weak suggestions] in
             DispatchQueue.main.async { suggestions?.dismiss() }
         }
-        pipeline.onSuggestionRejected = { [weak controller] in
-            DispatchQueue.main.async { controller?.showSuggestionRejected() }
+        pipeline.onRequestRejected = { [weak controller] in
+            DispatchQueue.main.async { controller?.showRejected() }
+        }
+        pipeline.onUndoApplied = { [weak controller] in
+            DispatchQueue.main.async { controller?.showUndo() }
         }
         pipeline.start()
         self.pipeline = pipeline
+
+        controller.onUndo = { [weak pipeline] in
+            pipeline?.undoLastFix()
+        }
+        controller.isUndoAvailable = { [weak pipeline] in
+            pipeline?.undoableFix() != nil
+        }
+
+        // Carbon, not the event tap: the shortcut has to work in exactly the
+        // situations where the tap does not. See `HotkeyCenter`.
+        hotkeys.onAction = { [weak self] action in
+            switch action {
+            case .undoLastFix:
+                self?.pipeline?.undoLastFix()
+            case .togglePause:
+                // Through the menu controller so the checkmark, the settings
+                // blob and the pipeline all move together.
+                self?.menuBarController?.togglePause()
+                self?.menuBarController?.showPauseChanged(paused: self?.settings.paused ?? false)
+            }
+        }
+        hotkeys.register()
 
         // Both halves of the safety layer feed the pipeline the same way: a
         // flag it caches on its own queue, plus a buffer drop on the way up.
@@ -119,9 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pollTimer = timer
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    public func applicationWillTerminate(_ notification: Notification) {
         pollTimer?.invalidate()
         pollTimer = nil
+        hotkeys.unregister()
         suggestionController?.dismiss()
         secureInput.stop()
         eventTap?.stop()

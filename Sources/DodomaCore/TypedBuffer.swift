@@ -17,11 +17,14 @@ public enum ResetReason: String, Equatable, Hashable, Sendable, CaseIterable {
     case secureInput
     case overflow
 
-    /// Whether clearing the buffer must also throw away the debug event log.
+    /// Whether clearing the buffer must also throw away everything else that
+    /// holds the user's text: the debug event log, and the undo slot.
     ///
     /// The log keeps the produced text of the last fifty keystrokes and
     /// deliberately survives an ordinary reset — watching what happened either
-    /// side of a reset is most of what the debug window is for.
+    /// side of a reset is most of what the debug window is for. The undo slot
+    /// survives one for the same kind of reason: an ordinary reset is the user
+    /// carrying on, not a reason to withdraw the escape hatch.
     ///
     /// `secureInput` is the one reason that says those keystrokes were never
     /// ours to keep. It is set when the focused field turns out to be a

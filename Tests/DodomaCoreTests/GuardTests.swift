@@ -74,6 +74,24 @@ final class GuardTests: XCTestCase {
                 .contains(.recentlyUndone))
     }
 
+    /// What the undo records is a `Fix.replacedText`, which carries the
+    /// separator the user typed after the word. The region being re-evaluated a
+    /// second later may or may not carry the same one — the user has typed
+    /// another character by then, or has not — so both sides are trimmed. Losing
+    /// this match means the fix that was just undone is re-applied within the
+    /// second, which is the one outcome that makes undo worse than useless.
+    func testRecentlyUndoneIgnoresSurroundingWhitespaceOnBothSides() {
+        XCTAssertTrue(
+            vetoes("hkh hsmdih hgdml", recentlyUndone: ["hkh hsmdih hgdml "])
+                .contains(.recentlyUndone), "the recorded text has the trailing separator")
+        XCTAssertTrue(
+            vetoes("hkh hsmdih hgdml ", recentlyUndone: ["hkh hsmdih hgdml"])
+                .contains(.recentlyUndone), "and the other way round")
+        XCTAssertFalse(
+            vetoes("hkh hsmdih hgdml", recentlyUndone: ["hkh hsmdih hgdm"])
+                .contains(.recentlyUndone), "trimming is not truncating")
+    }
+
     func testCleanProseFiresNothing() {
         XCTAssertEqual(vetoes("hkh hsmdih hgdml"), [])
     }

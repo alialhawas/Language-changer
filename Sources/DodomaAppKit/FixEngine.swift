@@ -59,6 +59,18 @@ struct FixFailure: Error {
     let progress: FixProgress
 }
 
+/// The one thing the typing pipeline asks of the injector.
+///
+/// A protocol because the alternative, in a test, is posting real backspaces
+/// into whatever window happens to be frontmost on the machine running them.
+protocol FixApplying: AnyObject {
+    func apply(
+        _ fix: Fix,
+        in bundleID: String?,
+        isStale: @escaping () -> Bool,
+        completion: @escaping (Result<FixProgress, FixFailure>) -> Void)
+}
+
 /// The destructive half of Dodoma: deletes what the user typed, types the
 /// corrected text in its place and switches the keyboard layout.
 ///
@@ -71,7 +83,7 @@ struct FixFailure: Error {
 /// whatever state it reached and the failure is logged as a fault with the
 /// counts; undo is M7's problem and a silent half-repair would be worse than a
 /// visible one.
-final class FixEngine {
+final class FixEngine: FixApplying {
     /// Every delay in the sequence, in one place, so per-app tuning later is a
     /// table lookup rather than a hunt through the injector.
     enum Timing {

@@ -1,4 +1,5 @@
 import AppKit
+import DodomaAppKit
 
 if let command = CLI.parse(Array(CommandLine.arguments.dropFirst())) {
     exit(CLI.run(command))

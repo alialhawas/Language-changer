@@ -33,7 +33,7 @@ final class TypingPipeline {
     /// filters our own events by marker; this is the belt-and-braces second
     /// line, covering the tail of an injection that is still draining through
     /// the event system when the engine reports back.
-    private static let applyTailWindow: TimeInterval = 0.3
+    static let applyTailWindow: TimeInterval = 0.3
 
     let queue = DispatchQueue(label: "com.ali.dodoma.pipeline", qos: .userInitiated)
 
@@ -43,6 +43,8 @@ final class TypingPipeline {
     var onDecision: ((DecisionSnapshot) -> Void)?
     /// Called on `queue` after a fix has been written to the screen.
     var onAutoApply: ((AppliedFix) -> Void)?
+    /// Called on `queue` after a fix has been taken back off the screen.
+    var onUndoApplied: (() -> Void)?
     /// Called on `queue` when a fix was good enough to offer but not to apply,
     /// either because the app is suggest-only, because the scores were middling
     /// or because the caret could not be verified.
@@ -51,22 +53,27 @@ final class TypingPipeline {
     /// the panel's own timeout starts here, because every one of them is a
     /// consequence of something only this queue can see.
     var onHideSuggestion: (() -> Void)?
-    /// Called on `queue` when an accepted suggestion was not applied after all
-    /// — the caret no longer matches, or the field turned out to be secure.
-    var onSuggestionRejected: (() -> Void)?
+    /// Called on `queue` when something the user asked for by name — an
+    /// accepted suggestion, an undo — was not carried out after all, because
+    /// the caret no longer matches or the field turned out to be secure.
+    /// Silence there would look exactly like a broken key.
+    var onRequestRejected: (() -> Void)?
 
     /// Shared, cached view of the enabled keyboard layouts. Owned here because
     /// this is where the invalidation notification is observed.
     let layoutEngine = LayoutEngine()
 
     private let session: TypingSession
-    private let fixEngine: FixEngine
+    private let fixEngine: FixApplying
     private let settings: SettingsStore
     private let frontmost: FrontmostAppTracker
-    private let secureInput: SecureInputMonitor
+    private let secureInput: SecureInputReading
     /// Shared with the suggestion controller: the caret lookup and the security
     /// check must queue behind one another rather than race on two queues.
     let focusOracle = FocusOracle()
+    /// The oracle as the gate uses it. Normally `focusOracle`; a test hands in
+    /// something that answers without an accessibility grant.
+    private let focus: FocusInspecting
     /// Written by the panel controller, read here and on the tap thread.
     private let suggestionState: SuggestionState
 
@@ -95,8 +102,9 @@ final class TypingPipeline {
     /// again, authoritatively.
     private var frontmostPolicy: AppPolicy
     private var lastDecision: DecisionSnapshot?
-    /// The single history slot M7 grows into `FixHistory`. Queue-confined.
-    private(set) var lastAppliedFix: AppliedFix?
+    /// The undo slot. Mutated here, on the queue; read from the main thread by
+    /// the menu, which is why it is behind its own lock.
+    private let history = FixHistoryStore()
     /// The suggestion currently on offer, if any. Queue-confined, and the
     /// authority on whether there is one: the shared `SuggestionState` says
     /// whether a *window* is on screen, which lags this by one main-thread hop.
@@ -104,17 +112,30 @@ final class TypingPipeline {
     /// Region texts turned down recently, so a dismissal is not undone by the
     /// next quiet period. Queue-confined.
     private var suppression = SuggestionSuppression()
+    /// Region texts the user has taken back. The same mechanism as `suppression`
+    /// and for the same reason, one layer deeper: without it the quiet period a
+    /// second after an undo re-applies the very fix that was just undone. It
+    /// feeds both the offer check and `TextGuards.recentlyUndone`, because the
+    /// re-application would otherwise be decided below the offer. Queue-confined.
+    private var undoSuppression = SuggestionSuppression()
 
     private var frontmostObserver: UUID?
     private var inputSourceObserver: NSObjectProtocol?
     private var enabledSourcesObserver: NSObjectProtocol?
 
     /// Must be created on the main thread.
+    ///
+    /// - Parameters:
+    ///   - fixEngine: the injector. Defaults to the real one; a test passes
+    ///     something that does not post events into the tester's own windows.
+    ///   - focus: the accessibility gate's oracle. Defaults to `focusOracle`.
     init(
         settings: SettingsStore = .shared,
         frontmost: FrontmostAppTracker,
-        secureInput: SecureInputMonitor,
-        suggestionState: SuggestionState
+        secureInput: SecureInputReading,
+        suggestionState: SuggestionState,
+        fixEngine: FixApplying? = nil,
+        focus: FocusInspecting? = nil
     ) {
         self.settings = settings
         self.frontmost = frontmost
@@ -123,16 +144,14 @@ final class TypingPipeline {
         self.paused = settings.paused
         self.secureInputActive = secureInput.isEnabled
         frontmostPolicy = settings.policy(for: frontmost.bundleID)
-        fixEngine = FixEngine(frontmost: frontmost)
+        self.fixEngine = fixEngine ?? FixEngine(frontmost: frontmost)
+        self.focus = focus ?? focusOracle
         session = TypingSession(frontmostBundleID: frontmost.bundleID)
     }
 
     func start() {
         frontmostObserver = frontmost.addObserver { [weak self] app in
-            guard let self else { return }
-            // The cached focus verdict belongs to the app that just lost focus.
-            self.focusOracle.invalidate()
-            self.submit(.appActivated(bundleID: app.bundleID, at: Self.now()))
+            self?.frontmostChanged(to: app)
         }
 
         let inputSourceName = Notification.Name(
@@ -157,6 +176,13 @@ final class TypingPipeline {
         }
 
         warmLayoutCache()
+    }
+
+    /// Another application came to the front. Main thread.
+    func frontmostChanged(to app: FrontmostApp) {
+        // The cached focus verdict belongs to the app that just lost focus.
+        focus.invalidate()
+        submit(.appActivated(bundleID: app.bundleID, at: Self.now()))
     }
 
     /// Enumerating input sources is a Text Input Sources call, which prefers
@@ -305,6 +331,18 @@ final class TypingPipeline {
         // appearing, when the tap does not yet know there is one.
         dismissSuggestion("input arrived")
 
+        // Withdrawing the undo is decided from the input rather than from the
+        // reset it caused, and ahead of every early return below, for the same
+        // reason: after a fix the buffer is already empty, so a click resets
+        // nothing and reports no reason at all — and a click is precisely the
+        // signal that the user has moved on and ⌘⌥Z now means something else.
+        if FixHistory.endsUndoWindow(input) {
+            history.invalidate(.userMovedOn)
+        }
+        if case .appActivated(let bundleID, _) = input {
+            history.noteFrontmost(bundleID: bundleID)
+        }
+
         if isSuppressed, Self.isTypingSignal(input) {
             // Not "ignored": never seen. While the pause is on, secure input is
             // enabled or the frontmost app is Off, keystrokes do not enter the
@@ -447,7 +485,8 @@ final class TypingPipeline {
         // function, which is the one place that reads `AppPolicy`.
         guard
             let detection = session.evaluate(
-                detector: detector, policy: policy, aggressiveness: settings.aggressiveness)
+                detector: detector, policy: policy, aggressiveness: settings.aggressiveness,
+                recentlyUndone: undoSuppression.texts(bundleID: bundleID, at: now))
         else { return }
         let duration = Self.now() - started
 
@@ -510,14 +549,14 @@ final class TypingPipeline {
         let inspection = SafetyGate.inspection(
             for: decision, skipVerify: settings.skipsAXVerify(bundleID))
 
-        focusOracle.inspect(
+        focus.inspect(
             pid: frontmost.current.processIdentifier,
             caretTextLength: inspection.caretTextLength
-        ) { [weak self] focus in
+        ) { [weak self] inspected in
             guard let self else { return }
             self.queue.async {
                 self.resolveGate(
-                    focus, decision: decision, snapshot: snapshot, policy: policy,
+                    inspected, decision: decision, snapshot: snapshot, policy: policy,
                     bundleID: bundleID, verified: inspection.caretTextLength != nil, serial: serial)
             }
         }
@@ -545,10 +584,13 @@ final class TypingPipeline {
             return
         }
 
+        // `.required`: nobody asked for this rewrite, so the only reason good
+        // enough to delete anything is a positive match.
         let verification =
             verified
             ? CaretVerification.verdict(
-                axText: focus.caretText, replacedText: decision.fix?.replacedText ?? "")
+                read: focus.caretRead, replacedText: decision.fix?.replacedText ?? "",
+                mode: .required)
             : .proceed
 
         let resolution = SafetyGate.resolve(
@@ -590,7 +632,7 @@ final class TypingPipeline {
 
         case .autoApply:
             guard let fix = decision.fix else { break }
-            beginApply(fix, bundleID: bundleID, verifiedAt: serial)
+            beginApply(fix, bundleID: bundleID, verifiedAt: serial, kind: .auto)
 
         case .nothing:
             break
@@ -613,11 +655,16 @@ final class TypingPipeline {
         dismissSuggestion("superseded by a newer suggestion", remember: false)
 
         let now = Self.now()
-        guard !suppression.isSuppressed(text: fix.replacedText, bundleID: bundleID, at: now) else {
+        let refusedRecently =
+            suppression.isSuppressed(text: fix.replacedText, bundleID: bundleID, at: now)
+            || undoSuppression.isSuppressed(text: fix.replacedText, bundleID: bundleID, at: now)
+        guard !refusedRecently else {
             // The buffer is not reset by a dismissal — the text really is still
             // in front of the caret — so without this the same offer comes back
-            // one second later, indefinitely.
-            Log.pipeline.debug("suggestion withheld: the same text was dismissed here recently")
+            // one second later, indefinitely. Text that was *undone* is held
+            // back here as well: taking a fix back and being offered it again a
+            // second later is the same loop with an extra insult.
+            Log.pipeline.debug("suggestion withheld: the same text was refused here recently")
             return
         }
 
@@ -687,7 +734,7 @@ final class TypingPipeline {
             // Silence here would look exactly like a broken accept key, so the
             // refusal is shown even though the user can do nothing about it.
             Log.pipeline.info("suggestion not applied: the pipeline is busy or suspended")
-            onSuggestionRejected?()
+            onRequestRejected?()
             return
         }
         beginAcceptGate(pending)
@@ -708,14 +755,14 @@ final class TypingPipeline {
             settings.skipsAXVerify(pending.bundleID)
             ? nil : pending.fix.replacedText.utf16.count
 
-        focusOracle.inspect(
+        focus.inspect(
             pid: frontmost.current.processIdentifier,
             caretTextLength: caretTextLength
-        ) { [weak self] focus in
+        ) { [weak self] inspected in
             guard let self else { return }
             self.queue.async {
                 self.resolveAccept(
-                    focus, pending: pending, verified: caretTextLength != nil, serial: serial)
+                    inspected, pending: pending, verified: caretTextLength != nil, serial: serial)
             }
         }
     }
@@ -737,10 +784,14 @@ final class TypingPipeline {
             return
         }
 
+        // `.bestEffort`: the user pointed at this text and asked for it to be
+        // replaced. That is worth proceeding on where accessibility is
+        // structurally silent — a terminal, a canvas-drawn web view — and
+        // nothing more. See `VerifyMode`.
         let verification =
             verified
             ? CaretVerification.verdict(
-                axText: focus.caretText, replacedText: pending.fix.replacedText)
+                read: focus.caretRead, replacedText: pending.fix.replacedText, mode: .bestEffort)
             : .proceed
 
         // The same rule the automatic path is resolved by, given the same
@@ -751,12 +802,12 @@ final class TypingPipeline {
         {
         case .autoApply:
             beginApply(
-                pending.fix, bundleID: pending.bundleID, verifiedAt: serial, accepted: true)
+                pending.fix, bundleID: pending.bundleID, verifiedAt: serial, kind: .accepted)
 
         case .drop(let reason):
             Log.pipeline.info("accepted fix dropped: \(reason, privacy: .public)")
             resetBuffer(reason: .secureInput)
-            onSuggestionRejected?()
+            onRequestRejected?()
 
         case .suggest(let downgradedFrom):
             // Re-offering would be a loop: the same check would fail again. The
@@ -765,7 +816,123 @@ final class TypingPipeline {
             Log.fix.info(
                 "accepted fix abandoned: \(downgradedFrom ?? "the caret could not be verified", privacy: .public)"
             )
-            onSuggestionRejected?()
+            onRequestRejected?()
+
+        case .nothing:
+            break
+        }
+    }
+
+    // MARK: - Undo
+
+    /// The fix the user may still take back, if any. Callable from any thread:
+    /// the menu asks while it is opening, and the answer moves with the clock,
+    /// so it cannot be a value published after the fact.
+    func undoableFix(now: Date = Date()) -> AppliedFix? {
+        history.undoableFix(now: now)
+    }
+
+    /// Takes back the last fix. Callable from any thread — the hot key and the
+    /// menu item both arrive on the main one.
+    func undoLastFix() {
+        queue.async { [weak self] in
+            self?.performUndo()
+        }
+    }
+
+    private func performUndo() {
+        dispatchPrecondition(condition: .onQueue(queue))
+
+        guard history.undoableFix(now: Date()) != nil else {
+            // ⌘⌥Z is a global chord, and most presses of it while there is
+            // nothing to take back are meant for the application underneath.
+            // Flashing at every one of them would be noise.
+            Log.fix.debug("undo requested with nothing to undo")
+            return
+        }
+        guard captureActive, !isSuppressed, !isApplying, !isGating else {
+            Log.fix.info("undo refused: the pipeline is busy or suspended")
+            onRequestRejected?()
+            return
+        }
+        guard let applied = history.takeUndoable(now: Date()) else { return }
+
+        // A card on screen is about text that is about to change underneath it.
+        // Not remembered as a refusal: the user was not answering the card.
+        dismissSuggestion("an undo was requested", remember: false)
+        beginUndoGate(applied)
+    }
+
+    /// The undo goes through the same accessibility gate as everything else
+    /// that deletes, asking about the *corrected* text — that is what is in
+    /// front of the caret now, and `Fix.inverted` puts it in `replacedText`
+    /// exactly so this check needs no special case.
+    private func beginUndoGate(_ applied: AppliedFix) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        isGating = true
+        cancelTrigger()
+
+        let inverse = applied.fix.inverted
+        let serial = inputs.current
+        let caretTextLength =
+            settings.skipsAXVerify(applied.bundleID) ? nil : inverse.replacedText.utf16.count
+
+        focus.inspect(
+            pid: frontmost.current.processIdentifier,
+            caretTextLength: caretTextLength
+        ) { [weak self] inspected in
+            guard let self else { return }
+            self.queue.async {
+                self.resolveUndo(
+                    inspected, applied: applied, inverse: inverse,
+                    verified: caretTextLength != nil, serial: serial)
+            }
+        }
+    }
+
+    private func resolveUndo(
+        _ focus: FocusInspection, applied: AppliedFix, inverse: Fix, verified: Bool, serial: UInt64
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard isGating else { return }
+        isGating = false
+
+        guard !inputs.hasMoved(since: serial) else {
+            Log.fix.info("undo abandoned: input arrived during the caret check")
+            // Nothing was posted, so the fix is still on screen and still worth
+            // offering. Same re-arm as the other two abandon paths.
+            history.restore(applied)
+            if !session.isBufferEmpty { armTrigger() }
+            return
+        }
+
+        let verification =
+            verified
+            ? CaretVerification.verdict(
+                read: focus.caretRead, replacedText: inverse.replacedText, mode: .bestEffort)
+            : .proceed
+
+        switch SafetyGate.resolve(
+            decision: .autoApply(inverse), secureField: focus.security, verification: verification)
+        {
+        case .autoApply:
+            beginApply(
+                inverse, bundleID: applied.bundleID, verifiedAt: serial,
+                kind: .undo(original: applied))
+
+        case .drop(let reason):
+            Log.fix.info("undo dropped: \(reason, privacy: .public)")
+            resetBuffer(reason: .secureInput)
+            onRequestRejected?()
+
+        case .suggest(let downgradedFrom):
+            // The corrected text is not where it was put. Deleting back from
+            // the caret would eat something else, and the slot stays gone: what
+            // is on screen is no longer the fix this undo was about.
+            Log.fix.info(
+                "undo abandoned: \(downgradedFrom ?? "the caret could not be verified", privacy: .public)"
+            )
+            onRequestRejected?()
 
         case .nothing:
             break
@@ -774,21 +941,40 @@ final class TypingPipeline {
 
     // MARK: - Applying
 
+    /// Which of the three ways a fix can reach the screen this is.
+    ///
+    /// The sequence, its guards and its aftermath are identical for all three
+    /// by design — that is the whole reason undo goes through here rather than
+    /// down a path of its own. What differs is only what is recorded and what
+    /// the user is shown afterwards.
+    private enum ApplyKind {
+        case auto
+        case accepted
+        /// The inverse of `original`, which has already been claimed out of the
+        /// undo slot and is put back if this never reaches the screen.
+        case undo(original: AppliedFix)
+
+        var description: String {
+            switch self {
+            case .auto: return "auto-applying"
+            case .accepted: return "applying an accepted suggestion"
+            case .undo: return "undoing"
+            }
+        }
+    }
+
     /// - Parameter verifiedAt: the input serial the caret verification was
     ///   taken at. The injector re-checks it after its modifier pre-flight,
     ///   which is the only part of the sequence long enough for the screen to
     ///   have changed since.
-    /// - Parameter accepted: the fix was asked for from the suggestion panel
-    ///   rather than decided on automatically. Only the log line differs; the
-    ///   sequence, its guards and its aftermath are identical by design.
     private func beginApply(
-        _ fix: Fix, bundleID: String?, verifiedAt: UInt64, accepted: Bool = false
+        _ fix: Fix, bundleID: String?, verifiedAt: UInt64, kind: ApplyKind
     ) {
         isApplying = true
         droppedInputDuringApply = false
         cancelTrigger()
         Log.fix.info(
-            "\(accepted ? "applying an accepted suggestion" : "auto-applying", privacy: .public): delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
+            "\(kind.description, privacy: .public): delete \(fix.deleteCount, privacy: .public) clusters, insert \(fix.insertText.count, privacy: .public), switch to \(fix.targetLayoutID, privacy: .public)"
         )
 
         let inputs = self.inputs
@@ -799,13 +985,13 @@ final class TypingPipeline {
         ) { [weak self] result in
             guard let self else { return }
             self.queue.async {
-                self.finishApply(fix, bundleID: bundleID, result: result)
+                self.finishApply(fix, bundleID: bundleID, kind: kind, result: result)
             }
         }
     }
 
     private func finishApply(
-        _ fix: Fix, bundleID: String?, result: Result<FixProgress, FixFailure>
+        _ fix: Fix, bundleID: String?, kind: ApplyKind, result: Result<FixProgress, FixFailure>
     ) {
         dispatchPrecondition(condition: .onQueue(queue))
 
@@ -814,14 +1000,33 @@ final class TypingPipeline {
         switch result {
         case .success(let succeeded):
             progress = succeeded
-            let applied = AppliedFix(fix: fix, appliedAt: Date(), bundleID: bundleID)
-            lastAppliedFix = applied
-            lastDecision?.result = "applied"
-            onAutoApply?(applied)
+            switch kind {
+            case .auto, .accepted:
+                let applied = AppliedFix(fix: fix, appliedAt: Date(), bundleID: bundleID)
+                history.record(applied)
+                lastDecision?.result = "applied"
+                onAutoApply?(applied)
+            case .undo(let original):
+                // The text the user originally typed is back in front of the
+                // caret, and the next quiet period will look straight at it.
+                // Without this it is re-fixed within the second.
+                undoSuppression.record(
+                    text: original.fix.replacedText, bundleID: bundleID, at: Self.now())
+                lastDecision?.result = "undone"
+                onUndoApplied?()
+            }
         case .failure(let failure):
             progress = failure.progress
             transientFailure = failure.error.isTransient
             lastDecision?.result = "failed: \(failure.error.description)"
+            if case .undo(let original) = kind, progress.touchedNothing, !droppedInputDuringApply {
+                // The undo never reached the screen — a modifier still held
+                // from the chord itself is the common case — so the fix is
+                // exactly where it was and the offer stands. Anything that did
+                // post events leaves a half-restored line, and a second
+                // destructive pass over that is not something to offer.
+                history.restore(original)
+            }
         }
         if let lastDecision { onDecision?(lastDecision) }
 
@@ -862,11 +1067,39 @@ final class TypingPipeline {
     /// The buffer no longer describes what is in front of the caret.
     private func resetBuffer(reason: ResetReason) {
         dispatchPrecondition(condition: .onQueue(queue))
+        if reason.purgesHistory {
+            // The undo slot holds the user's own text, both halves of it.
+            // Whatever made the buffer unkeepable — a password field, so far —
+            // makes that unkeepable too, and a reset that purged one and left
+            // the other would protect nothing.
+            history.invalidate(.purged)
+        }
         let snapshot = session.reset(reason: reason, at: Self.now())
         onChange?(snapshot)
     }
 
     private static func now() -> TimeInterval {
         Date().timeIntervalSinceReferenceDate
+    }
+
+    // MARK: - Seams for DodomaAppTests
+
+    /// Raises an offer for `fix` as though the detector had just produced one.
+    /// Queue-confined.
+    ///
+    /// The tests cannot reach this through the detector: that needs both an
+    /// English and an Arabic input source enabled on whichever machine happens
+    /// to be running them, and what is under test here is the interaction, not
+    /// the detection — which has its own tests, against fixtures.
+    func offerNow(_ fix: Fix, bundleID: String?) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        offerSuggestion(fix, bundleID: bundleID, serial: inputs.current)
+    }
+
+    /// Whether an evaluation is scheduled. Queue-confined. The three abandon
+    /// paths re-arm the trigger, and there is nothing else that shows they did.
+    var isEvaluationArmed: Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        return pendingEvaluation != nil
     }
 }

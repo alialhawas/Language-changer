@@ -4,8 +4,8 @@ import Foundation
 
 /// Non-GUI entry points. Every command here runs without Accessibility or
 /// Input Monitoring grants and exits before `NSApplication` is touched.
-enum CLI {
-    enum Command {
+public enum CLI {
+    public enum Command {
         case render(text: String?)
         case dumpLayoutFixtures(path: String?)
         case score(text: String?)
@@ -20,7 +20,7 @@ enum CLI {
         "com.apple.keylayout.Arabic",
     ]
 
-    static func parse(_ arguments: [String]) -> Command? {
+    public static func parse(_ arguments: [String]) -> Command? {
         func value(after flag: String) -> String? {
             guard let index = arguments.firstIndex(of: flag),
                   arguments.indices.contains(index + 1)
@@ -51,7 +51,7 @@ enum CLI {
         return nil
     }
 
-    static func run(_ command: Command) -> Int32 {
+    public static func run(_ command: Command) -> Int32 {
         switch command {
         case .render(let text):
             guard let text else {

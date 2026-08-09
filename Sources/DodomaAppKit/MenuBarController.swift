@@ -7,11 +7,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private static let flashDuration: TimeInterval = 1.5
     /// Title shown while a fix is being applied.
     private static let autoApplyFlash = "⇄ ع/E"
-    /// Title shown when the user accepted a suggestion but the text in front of
-    /// the caret turned out not to be what the fix was computed from. Applying
-    /// it anyway would delete the wrong characters, so nothing happens and the
-    /// refusal has to be visible — otherwise the accept key looks broken.
+    /// Title shown when the user asked for something — accepting a suggestion,
+    /// an undo — and the text in front of the caret turned out not to be what
+    /// it was computed from. Applying it anyway would delete the wrong
+    /// characters, so nothing happens and the refusal has to be visible;
+    /// otherwise the key looks broken.
     private static let rejectedFlash = "✕"
+    /// Title shown when a fix has just been taken back.
+    private static let undoFlash = "↩"
+    /// Titles for the pause hot key, which has no other feedback: the menu is
+    /// not open when it is pressed.
+    private static let pausedFlash = "⏸"
+    private static let resumedFlash = "▶"
+    /// Appended to the "Last fix" line once that fix has been undone.
+    static let undoneSuffix = " (undone)"
     /// Longest each field of the "Last fix" line may be before it is
     /// middle-ellipsised.
     private static let fieldLimit = 20
@@ -24,6 +33,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let statusLineItem: NSMenuItem
     private let lastFixItem: NSMenuItem
+    private let undoItem: NSMenuItem
     private let pauseItem: NSMenuItem
     private let modeItem: NSMenuItem
     private var modeOptions: [AppPolicy: NSMenuItem] = [:]
@@ -32,10 +42,34 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// Bumped by every flash so a stale restore cannot undo a newer one.
     private var flashToken = 0
 
+    /// The menu's rendering of `Hotkeys.undoLastFix`. The letter is spelled out
+    /// because a key equivalent is a character and a hot key is a key code, and
+    /// nothing translates one into the other without asking the active layout.
+    /// Key code 6 is Z; `MenuBarControllerTests` pins the pair together.
+    static let undoKeyEquivalent = "z"
+    static var undoModifiers: NSEvent.ModifierFlags {
+        modifierFlags(Hotkeys.undoLastFix.modifiers)
+    }
+
+    static func modifierFlags(_ flags: KeyFlags) -> NSEvent.ModifierFlags {
+        var mask: NSEvent.ModifierFlags = []
+        if flags.contains(.command) { mask.insert(.command) }
+        if flags.contains(.option) { mask.insert(.option) }
+        if flags.contains(.shift) { mask.insert(.shift) }
+        if flags.contains(.control) { mask.insert(.control) }
+        return mask
+    }
+
     /// Invoked when the user picks "Debug Window".
     var onShowDebugWindow: (() -> Void)?
     /// Invoked after the user toggles the pause item, with the new value.
     var onPauseChanged: ((Bool) -> Void)?
+    /// Invoked when the user picks "Undo Last Fix".
+    var onUndo: (() -> Void)?
+    /// Asked, on the main thread, while the menu is opening: is there anything
+    /// to undo *right now*? It expires on a timer as well as on events, so it
+    /// cannot be a value pushed here after the fact.
+    var isUndoAvailable: (() -> Bool)?
 
     private static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
@@ -58,6 +92,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         lastFixItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         lastFixItem.isEnabled = false
         lastFixItem.isHidden = true
+        // The key equivalent is decoration: the shortcut is registered with
+        // Carbon, which is what makes it work when Dodoma is not frontmost —
+        // i.e. always. Setting it here is what renders "⌘⌥Z" beside the title.
+        undoItem = NSMenuItem(
+            title: "Undo Last Fix", action: nil,
+            keyEquivalent: Self.undoKeyEquivalent)
+        undoItem.keyEquivalentModifierMask = Self.undoModifiers
+        undoItem.isEnabled = false
         pauseItem = NSMenuItem(title: "Pause Dodoma", action: nil, keyEquivalent: "")
         modeItem = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
 
@@ -98,8 +140,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     /// Main thread only.
-    func showSuggestionRejected() {
+    func showRejected() {
         flash(Self.rejectedFlash)
+    }
+
+    /// Main thread only.
+    func showUndo() {
+        flash(Self.undoFlash)
+        lastFixItem.title = Self.undoneText(lastFixItem.title)
+    }
+
+    /// Main thread only. The pause hot key has no other feedback: the menu that
+    /// carries the checkmark is not open when it is pressed.
+    func showPauseChanged(paused: Bool) {
+        flash(paused ? Self.pausedFlash : Self.resumedFlash)
     }
 
     static func lastFixText(replaced: String, inserted: String, app: String, at date: Date)
@@ -108,6 +162,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let field = { TextDisplay.middleTruncate($0, limit: fieldLimit) }
         return "Last fix: \(field(replaced)) → \(field(inserted)) "
             + "(\(field(app))) \(timeFormatter.string(from: date))"
+    }
+
+    /// Idempotent: an undo cannot happen twice, but a second flash arriving for
+    /// any reason must not stack the suffix.
+    static func undoneText(_ lastFixTitle: String) -> String {
+        guard !lastFixTitle.isEmpty, !lastFixTitle.hasSuffix(undoneSuffix) else {
+            return lastFixTitle
+        }
+        return lastFixTitle + undoneSuffix
     }
 
     private func flash(_ title: String) {
@@ -150,6 +213,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(statusLineItem)
         menu.addItem(lastFixItem)
+        menu.addItem(.separator())
+
+        undoItem.target = self
+        undoItem.action = #selector(undoLastFix)
+        menu.addItem(undoItem)
+
         menu.addItem(.separator())
 
         pauseItem.target = self
@@ -228,15 +297,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             item.isEnabled = app.bundleID != nil
         }
         pauseItem.state = settings.paused ? .on : .off
+        // Asked now rather than pushed on every apply: the offer expires on a
+        // timer, so a value published when the fix landed would be a lie by the
+        // time the user opens the menu.
+        undoItem.isEnabled = isUndoAvailable?() ?? false
     }
 
     // MARK: - Actions
 
-    @objc private func togglePause() {
+    /// Also the hot key's target, so the two cannot drift: whatever the menu
+    /// item does, ⌘⌥P does.
+    @objc func togglePause() {
         let paused = !settings.paused
         settings.setPaused(paused)
         pauseItem.state = paused ? .on : .off
         onPauseChanged?(paused)
+    }
+
+    @objc private func undoLastFix() {
+        onUndo?()
     }
 
     @objc private func selectMode(_ sender: NSMenuItem) {

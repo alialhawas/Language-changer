@@ -321,6 +321,14 @@ final class EventTapController {
             break
         }
 
+        // Dodoma's own chord, which Carbon is about to dispatch. The event is
+        // still passed through — the hot key machinery lives downstream of this
+        // tap and consumes it there — but it must not reach the pipeline as
+        // typing. Letting it through would bump the input serial that the undo
+        // it is asking for is then validated against, and the undo would race
+        // its own shortcut and silently abandon itself.
+        if Hotkeys.action(forKeycode: keycode, flags: flags) != nil { return false }
+
         // Autorepeat floods the pipeline with duplicates of the same character.
         // Backspace is the exception: held-down deletes must shrink the buffer.
         let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0

@@ -1,0 +1,267 @@
+import DodomaCore
+import XCTest
+
+@testable import DodomaAppKit
+
+/// Undo, from the shortcut to the screen.
+///
+/// The rule about *whether* there is anything to undo is pure and covered in
+/// `FixHistoryTests`. What is covered here is the part that only exists once
+/// the pipeline is wired up: that the inverse goes through the same gate and
+/// the same injector as everything else that deletes, that the slot is claimed
+/// exactly once, and that the text it puts back is not immediately re-fixed.
+final class UndoFlowTests: XCTestCase {
+    private var harness: PipelineHarness!
+
+    override func setUp() {
+        super.setUp()
+        harness = PipelineHarness()
+        harness.oracle.answer(caret: Fixtures.caretBeforeFix)
+    }
+
+    override func tearDown() {
+        harness = nil
+        super.tearDown()
+    }
+
+    /// Gets a fix onto the screen the way the user would: an offer, accepted.
+    private func applyAFix() {
+        harness.offer(Fixtures.fix)
+        harness.send(.suggestionAccept)
+        XCTAssertEqual(harness.engine.applied.count, 1, "precondition: a fix was applied")
+        harness.waitForApplyTail(self)
+        // From here on the corrected text is what is in front of the caret.
+        harness.oracle.answer(caret: Fixtures.caretAfterFix)
+    }
+
+    // MARK: - The happy path
+
+    func testAnAppliedFixBecomesUndoable() {
+        applyAFix()
+        XCTAssertEqual(harness.pipeline.undoableFix()?.fix, Fixtures.fix)
+        XCTAssertEqual(harness.pipeline.undoableFix()?.bundleID, Fixtures.app)
+    }
+
+    func testUndoAppliesTheInverseThroughTheSameInjector() {
+        applyAFix()
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 2)
+        let inverse = harness.engine.lastFix
+        XCTAssertEqual(inverse?.deleteCount, Fixtures.fix.insertText.count)
+        XCTAssertEqual(inverse?.insertText, Fixtures.fix.replacedText)
+        XCTAssertEqual(inverse?.targetLayoutID, Fixtures.english, "and the layout goes back")
+        XCTAssertEqual(inverse?.replacedText, Fixtures.fix.insertText)
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+    }
+
+    /// The undo is not a new fix: it must not be recorded as one, or ⌘⌥Z twice
+    /// would put the correction back.
+    func testAnUndoIsNotItselfRecorded() {
+        applyAFix()
+        harness.undo()
+
+        XCTAssertNil(harness.pipeline.undoableFix())
+        XCTAssertEqual(harness.applied.count, 1, "the undo is not a `Last fix` line")
+
+        harness.waitForApplyTail(self)
+        harness.undo()
+        XCTAssertEqual(harness.engine.applied.count, 2, "nothing more happened")
+    }
+
+    /// The caret check on the way back is against the *corrected* text, which
+    /// is what is on screen now.
+    func testTheCaretIsVerifiedAgainstTheCorrectedText() {
+        applyAFix()
+        harness.undo()
+        XCTAssertEqual(
+            harness.oracle.requestedLengths.last, Fixtures.fix.insertText.utf16.count)
+    }
+
+    // MARK: - Re-fixing
+
+    /// The one outcome that would make undo worse than useless: the quiet
+    /// period a second later looks at the restored gibberish and fixes it
+    /// again.
+    func testTheRestoredTextIsNotOfferedAgain() {
+        applyAFix()
+        harness.undo()
+        harness.waitForApplyTail(self)
+
+        harness.offer(Fixtures.fix)
+        XCTAssertEqual(harness.offers.count, 1, "still just the original offer")
+
+        harness.offer(Fixtures.otherFix)
+        XCTAssertEqual(harness.offers.count, 2, "and only that text is held back")
+    }
+
+    // MARK: - Nothing to undo
+
+    func testUndoWithNothingToUndoIsSilent() {
+        harness.undo()
+        XCTAssertTrue(harness.engine.applied.isEmpty)
+        XCTAssertEqual(
+            harness.rejectionCount, 0,
+            "⌘⌥Z is a global chord; most presses of it are meant for the app underneath")
+    }
+
+    func testSwitchingApplicationsWithdrawsTheUndo() {
+        applyAFix()
+        harness.activate(Fixtures.otherApp)
+        XCTAssertNil(harness.pipeline.undoableFix())
+
+        harness.undo()
+        XCTAssertEqual(harness.engine.applied.count, 1)
+    }
+
+    func testComingBackToTheSameApplicationKeepsTheUndo() {
+        applyAFix()
+        harness.activate(Fixtures.app)
+        XCTAssertNotNil(harness.pipeline.undoableFix())
+    }
+
+    func testAClickWithdrawsTheUndo() {
+        applyAFix()
+        harness.click()
+        XCTAssertNil(harness.pipeline.undoableFix())
+    }
+
+    func testReturnWithdrawsTheUndo() {
+        applyAFix()
+        harness.type("", keycode: Keycode.returnKey)
+        XCTAssertNil(harness.pipeline.undoableFix())
+    }
+
+    /// Carrying on typing is not moving on. The undo is for the fix that just
+    /// happened, and the user noticing it a word later is the normal case.
+    func testOrdinaryTypingKeepsTheUndo() {
+        applyAFix()
+        harness.type("a")
+        harness.type("b")
+        XCTAssertNotNil(harness.pipeline.undoableFix())
+    }
+
+    /// The undo slot holds the user's own text, both halves of it. Whatever
+    /// makes the buffer unkeepable makes that unkeepable too.
+    func testASecureFieldPurgesTheUndo() {
+        applyAFix()
+        harness.oracle.answer(caret: Fixtures.caretAfterFix, security: .secure)
+        harness.offer(Fixtures.otherFix)
+        harness.send(.suggestionAccept)
+
+        XCTAssertNil(harness.pipeline.undoableFix())
+    }
+
+    // MARK: - Refusals
+
+    func testAMismatchedCaretRefusesAndKeepsTheSlotClaimed() {
+        applyAFix()
+        harness.oracle.answer(caret: .value("the user has moved the caret"))
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 1, "nothing was deleted")
+        XCTAssertEqual(harness.rejectionCount, 1)
+        XCTAssertNil(
+            harness.pipeline.undoableFix(),
+            "what is on screen is no longer the fix this undo was about")
+    }
+
+    func testALiveSelectionRefuses() {
+        applyAFix()
+        harness.oracle.answer(caret: .selectionPresent)
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 1)
+        XCTAssertEqual(harness.rejectionCount, 1)
+    }
+
+    /// The same best-effort exception the accepted-suggestion path gets, and
+    /// for the same reason: the user asked by name.
+    func testAnElementWithNoTextStillUndoes() {
+        applyAFix()
+        harness.oracle.answer(caret: .unreadable)
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 2)
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+    }
+
+    /// The commonest failure of all: ⌘⌥ is still held down from the chord that
+    /// asked for the undo, so the injector's pre-flight gives up. Nothing was
+    /// posted, the fix is still on screen, and pressing again has to work.
+    func testAnUndoThatNeverReachedTheScreenCanBeRetried() {
+        applyAFix()
+        harness.engine.result = .failure(
+            FixFailure(error: .modifierHeld, progress: FixProgress()))
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 2, "it was attempted")
+        XCTAssertEqual(harness.undoAppliedCount, 0, "and it did not happen")
+        XCTAssertNotNil(harness.pipeline.undoableFix(), "so it is still on offer")
+
+        harness.waitForApplyTail(self)
+        harness.engine.result = .success(FixProgress(deletedClusters: 7, insertedUTF16Units: 7))
+        harness.undo()
+        XCTAssertEqual(harness.engine.applied.count, 3)
+        XCTAssertEqual(harness.undoAppliedCount, 1)
+    }
+
+    /// A half-restored line is not something to offer a second destructive pass
+    /// over.
+    func testAnUndoThatFailedHalfwayIsNotRetried() {
+        applyAFix()
+        harness.engine.result = .failure(
+            FixFailure(
+                error: .frontmostChanged,
+                progress: FixProgress(deletedClusters: 3, insertedUTF16Units: 0)))
+        harness.undo()
+
+        XCTAssertNil(harness.pipeline.undoableFix())
+    }
+
+    func testInputDuringTheUndoCaretCheckAbandonsItAndKeepsTheOffer() {
+        applyAFix()
+        harness.oracle.beforeAnswering = { [weak harness] in
+            harness?.pipeline.handle(
+                .key(CapturedKey(
+                    keycode: 0, producedText: "z",
+                    timestamp: Date().timeIntervalSinceReferenceDate)))
+        }
+        harness.undo()
+
+        XCTAssertEqual(harness.engine.applied.count, 1, "nothing was posted")
+        XCTAssertNotNil(harness.pipeline.undoableFix(), "so the fix is still where it was")
+        XCTAssertTrue(harness.isEvaluationArmed)
+    }
+
+    // MARK: - Interaction with the panel
+
+    func testUndoTakesAVisibleSuggestionDownWithoutRememberingARefusal() {
+        applyAFix()
+        harness.offer(Fixtures.otherFix)
+        let hidesBefore = harness.hideCount
+        harness.undo()
+
+        XCTAssertEqual(harness.hideCount, hidesBefore + 1)
+        harness.waitForApplyTail(self)
+        harness.offer(Fixtures.otherFix)
+        XCTAssertEqual(
+            harness.offers.filter { $0 == Fixtures.otherFix }.count, 2,
+            "the user was not answering that card")
+    }
+
+    // MARK: - Suspension
+
+    func testUndoWhilePausedRefusesVisibly() {
+        applyAFix()
+        var paused = harness.settings.settings
+        paused.paused = true
+        harness.pipeline.apply(paused)
+        harness.drain()
+
+        harness.undo()
+        XCTAssertEqual(harness.engine.applied.count, 1)
+        XCTAssertEqual(harness.rejectionCount, 1)
+        XCTAssertNotNil(harness.pipeline.undoableFix(), "and the slot was not spent")
+    }
+}

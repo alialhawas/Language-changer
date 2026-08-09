@@ -56,7 +56,11 @@ public enum TextGuards {
     /// - Parameters:
     ///   - currentModel: model for the language the user is typing in; drives
     ///     `.currentLangCoverage`. Pass `nil` to skip that guard.
-    ///   - recentlyUndone: regions the user has undone, matched case-insensitively.
+    ///   - recentlyUndone: regions the user has undone, matched
+    ///     case-insensitively and ignoring surrounding whitespace. Both sides
+    ///     are trimmed: what is recorded is a `Fix.replacedText`, which carries
+    ///     the separator the user typed after the word, and the region being
+    ///     re-evaluated a moment later may or may not carry the same one.
     public static func evaluate(
         _ text: String,
         currentModel: LanguageModel? = nil,
@@ -78,9 +82,11 @@ public enum TextGuards {
         if tokens.contains(where: hasMixedScript) { vetoes.append(.mixedScriptToken) }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if recentlyUndone.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
-            vetoes.append(.recentlyUndone)
+        let wasUndone = recentlyUndone.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(trimmed) == .orderedSame
         }
+        if wasUndone { vetoes.append(.recentlyUndone) }
 
         return GuardResult(vetoes: vetoes)
     }

@@ -2,9 +2,10 @@ import Foundation
 
 /// A fix that was actually written to the screen.
 ///
-/// The pipeline keeps a single slot of this. M7 turns the slot into a bounded
-/// `FixHistory`, which is why the record already carries everything an undo
-/// needs: the edit itself, when it happened and which app it happened in.
+/// `FixHistory` keeps one of these, and it carries exactly what deciding on an
+/// undo needs: the edit itself (so it can be inverted), when it happened (the
+/// time limit) and which application it happened in (the invalidation rule and
+/// the frontmost check the injector makes before typing anything).
 public struct AppliedFix: Equatable, Sendable {
     public let fix: Fix
     public let appliedAt: Date

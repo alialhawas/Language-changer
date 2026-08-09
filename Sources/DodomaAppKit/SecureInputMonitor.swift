@@ -14,7 +14,15 @@ import Foundation
 /// the window between the flag going up and the next evaluation is at least the
 /// one-second trigger delay, and the flag is re-read synchronously at
 /// evaluation time as well.
-final class SecureInputMonitor {
+/// The two questions the typing pipeline asks about secure input. A protocol so
+/// a test can answer them without the machine's real flag deciding whether the
+/// test passes.
+protocol SecureInputReading: AnyObject {
+    var isEnabled: Bool { get }
+    func readNow() -> Bool
+}
+
+final class SecureInputMonitor: SecureInputReading {
     static let pollInterval: TimeInterval = 1.0
 
     private let lock = NSLock()
