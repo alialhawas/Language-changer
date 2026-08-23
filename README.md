@@ -11,6 +11,33 @@ It runs as a background agent with no Dock icon, does no networking of any kind,
 and keeps everything it observes on the machine. Version 1.0.0, macOS 14 or
 newer.
 
+## Why this exists
+
+If you write in two languages all day, you do not think about the keyboard
+layout — you think about the sentence. So you switch to English to paste a link
+or answer a colleague, then come back to write in Arabic and start typing
+without switching back. Nothing warns you. The first sign that anything is wrong
+is a line of nonsense on the screen:
+
+    hgsghl ugdj      instead of   السلام عليك
+    اخص ه يهي صاشف    instead of   how i did what
+
+The text is not lost, it is simply being drawn through the wrong table: every
+key you pressed was the right key. But there is no way to tell macOS that, so
+the ritual is always the same — select the line, delete it, find the layout
+switcher, and type the whole thing again. A dozen times a day, that is real time
+and real irritation, and it interrupts the thing you were actually thinking
+about.
+
+Dodoma removes the ritual. It notices the moment you pause, works out that what
+you typed is only meaningful under the other layout, and rewrites it in place —
+switching the keyboard for you, so the next word you type is already in the
+language you meant. You keep writing. In practice you stop noticing that you
+ever forgot.
+
+The reverse direction is handled the same way: English typed while Arabic is
+active comes out as `اخص ه`, and gets turned back into `how i`.
+
 ## How it works
 
 Dodoma does not read the characters on your screen and guess. It records the
@@ -273,6 +300,31 @@ The settings switch clears that key when you switch it off; `defaults write …
 **The debug window.** Menu → **Debug Window** shows the live buffer, the last
 decision with both scores and the guards that fired, and the last 50 key events.
 Its contents are sensitive — it is the one place typed text is displayed.
+
+### Nothing happens in one particular app
+
+Before deleting anything, Dodoma asks the focused app what text sits in front of
+the caret, and refuses to rewrite what it cannot confirm. Most apps answer.
+Some do not: an app that draws its editor in a **WKWebView** — a native app with
+a web view inside it, as opposed to an Electron app like Slack — generally
+cannot answer, so fixes there are offered as a suggestion rather than applied.
+
+If you trust a specific app, list it in `axVerifySkip` and Dodoma will act on
+its own record of your keystrokes there instead:
+
+    /usr/bin/python3 - <<'EOF'
+    import subprocess, plistlib, json
+    raw = subprocess.run(["defaults","export","com.ali.dodoma","-"],capture_output=True).stdout
+    d = plistlib.loads(raw); s = json.loads(bytes(d["settings"]).decode())
+    s["axVerifySkip"] = sorted(set(s.get("axVerifySkip", [])) | {"com.example.app"})
+    d["settings"] = json.dumps(s, separators=(",",":")).encode()
+    open("/tmp/dodoma.plist","wb").write(plistlib.dumps(d))
+    EOF
+    defaults import com.ali.dodoma /tmp/dodoma.plist
+    pkill -x Dodoma; open /Applications/Dodoma.app
+
+The undo hotkey is the safety net for those apps, since the screen is no longer
+being checked before the delete.
 
 ## Manual verification runbook
 
