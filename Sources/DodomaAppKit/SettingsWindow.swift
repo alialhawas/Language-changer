@@ -212,6 +212,13 @@ final class SettingsWindowController {
             defer: false)
         window.title = "Dodoma Settings"
         window.isReleasedWhenClosed = false
+        // The starfield runs edge to edge, so the title bar has to stop being
+        // an opaque strip across the top of it.
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = NSColor(red: 0.043, green: 0.055, blue: 0.075, alpha: 1)
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: SettingsView(model: model))
         window.center()
         window.setFrameAutosaveName("DodomaSettingsWindow")
@@ -225,16 +232,52 @@ private struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
-        TabView {
-            GeneralTab(model: model)
-                .tabItem { Text("General") }
-            ApplicationsTab(model: model)
-                .tabItem { Text("Applications") }
-            AdvancedTab(model: model)
-                .tabItem { Text("Advanced") }
+        ZStack {
+            DodomaTheme.canvas
+            // White reads as starlight; the teal is saved for the accents so
+            // the two do not compete.
+            GravityStarsBackground(
+                starCount: 90, starSize: 2.2, starOpacity: 0.85,
+                starColor: Color(red: 0.87, green: 0.95, blue: 0.98))
+
+            VStack(spacing: 0) {
+                header
+                TabView {
+                    GeneralTab(model: model)
+                        .tabItem { Text("General") }
+                    ApplicationsTab(model: model)
+                        .tabItem { Text("Applications") }
+                    AdvancedTab(model: model)
+                        .tabItem { Text("Advanced") }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
         }
-        .padding(16)
-        .frame(width: 560, height: 480)
+        .frame(width: 560, height: 520)
+        .preferredColorScheme(.dark)
+    }
+
+    /// The window has no title bar text of its own now, so the wordmark and the
+    /// live status line carry the identity instead.
+    private var header: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(DodomaTheme.accent)
+                .frame(width: 7, height: 7)
+                .shadow(color: DodomaTheme.accent.opacity(0.8), radius: 5)
+            Text("DODOMA")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .kerning(2.4)
+                .foregroundStyle(DodomaTheme.accent)
+            Spacer()
+            Text("ع  ⇄  EN")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.35))
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
     }
 }
 

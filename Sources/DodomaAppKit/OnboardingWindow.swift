@@ -78,10 +78,22 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window.title = "Welcome to Dodoma"
         window.isReleasedWhenClosed = false
         window.delegate = self
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = NSColor(red: 0.043, green: 0.055, blue: 0.075, alpha: 1)
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(
-            rootView: OnboardingView(
-                model: model,
-                onDone: { [weak self] in self?.finish() }))
+            rootView: ZStack {
+                DodomaTheme.canvas
+                GravityStarsBackground(
+                    starCount: 110, starSize: 2.4, starOpacity: 0.85,
+                    starColor: Color(red: 0.87, green: 0.95, blue: 0.98))
+                OnboardingView(
+                    model: model,
+                    onDone: { [weak self] in self?.finish() })
+            }
+            .preferredColorScheme(.dark))
         window.center()
         return window
     }

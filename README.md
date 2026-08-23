@@ -40,13 +40,18 @@ active comes out as `اخص ه`, and gets turned back into `how i`.
 
 ## How it works
 
-Two illustrated walkthroughs live in `docs/`:
+Three illustrated walkthroughs live in `docs/`. Each opens straight from the
+browser — no checkout required:
 
-- **[docs/how-it-works.html](docs/how-it-works.html)** — a 13-slide deck covering the
-  whole pipeline, the safety gates, and the two bugs that only live use found.
-  Open it in any browser; arrow keys or space to advance.
-- **[docs/dodoma-how-it-works.excalidraw](docs/dodoma-how-it-works.excalidraw)** — the
-  same flow as one editable diagram. Drag it onto [excalidraw.com](https://excalidraw.com).
+| | What it is | Open it |
+|---|---|---|
+| **Slide deck** | 13 slides covering the whole pipeline, the safety gates, and the two bugs that only live use found. Arrow keys or space to advance. | [view](https://htmlpreview.github.io/?https://raw.githubusercontent.com/alialhawas/Language-changer/auto-detect-keyboard-language-switch/docs/how-it-works.html) · [source](docs/how-it-works.html) |
+| **Diagram** | The same flow as one editable canvas — every box and arrow can be moved. | [open in Excalidraw](https://excalidraw.com/#url=https://raw.githubusercontent.com/alialhawas/Language-changer/auto-detect-keyboard-language-switch/docs/dodoma-how-it-works.excalidraw) · [source](docs/dodoma-how-it-works.excalidraw) |
+| **Video** | A narrated walkthrough of the same material, for watching rather than clicking. | [docs/how-it-works.mp4](docs/how-it-works.mp4) |
+
+GitHub serves `.html` as plain text rather than rendering it, which is why the
+deck link goes through `htmlpreview` — it fetches the raw file and renders it in
+place. Nothing is uploaded anywhere.
 
 
 
