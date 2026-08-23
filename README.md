@@ -40,6 +40,16 @@ active comes out as `اخص ه`, and gets turned back into `how i`.
 
 ## How it works
 
+Two illustrated walkthroughs live in `docs/`:
+
+- **[docs/how-it-works.html](docs/how-it-works.html)** — a 13-slide deck covering the
+  whole pipeline, the safety gates, and the two bugs that only live use found.
+  Open it in any browser; arrow keys or space to advance.
+- **[docs/dodoma-how-it-works.excalidraw](docs/dodoma-how-it-works.excalidraw)** — the
+  same flow as one editable diagram. Drag it onto [excalidraw.com](https://excalidraw.com).
+
+
+
 Dodoma does not read the characters on your screen and guess. It records the
 **key codes** you pressed — physical positions on the keyboard, which are the
 same whatever layout is active — and after one second of not typing it renders
