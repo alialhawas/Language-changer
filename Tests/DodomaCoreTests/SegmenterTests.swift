@@ -14,6 +14,32 @@ final class SegmenterTests: XCTestCase {
         XCTAssertEqual(region.completedTokenCount, 0)
     }
 
+    /// Regression: a one-letter token used to end the backwards walk.
+    ///
+    /// Typing "how i did what" on the Arabic layout came back as
+    /// "اخص ه did what" — the lone "i" scored the same in both languages, the
+    /// walk treated the tie as a boundary, and everything before it was
+    /// stranded in the wrong script. A single letter is evidence of nothing
+    /// and must not be a wall.
+    func testASingleLetterTokenDoesNotStopTheWalk() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.latinKeys("HSMDIH H HGDML")
+        let region = try XCTUnwrap(fixture.segment(keys))
+
+        XCTAssertEqual(region.typedText, "HSMDIH H HGDML")
+        XCTAssertEqual(region.tokenCount, 3)
+    }
+
+    /// The other half of the same rule: a leading single letter that the
+    /// alternate layout does not actually improve stays out of the region.
+    func testALeadingSignalFreeTokenIsNotAbsorbed() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.latinKeys("a HSMDIH HGDML")
+        let region = try XCTUnwrap(fixture.segment(keys))
+
+        XCTAssertEqual(region.typedText, "HSMDIH HGDML")
+    }
+
     func testFullGibberishBufferSelectsEverything() throws {
         let fixture = try DetectorFixture.make()
         let keys = try fixture.latinKeys("HC MV; HKH HSMDIH HGDML")

@@ -85,9 +85,24 @@ public enum Segmenter {
                     LayoutRenderer.render(tokenKeys, layout: alternateLayout, capsMode: $0)
                 ).combined }
                 .max() ?? 0
-            guard bestAlternate > currentScore else { break }
 
-            firstAccepted = position
+            if bestAlternate > currentScore {
+                firstAccepted = position
+                continue
+            }
+
+            // A one-letter token is evidence of nothing. Both languages score
+            // it the same, so the comparison above ties and the walk would
+            // stop — stranding everything before it. That is how "how i did
+            // what" typed on the wrong layout came back as "اخص ه did what":
+            // the lone "i" was a wall, not a word. Step over it. It cannot
+            // start a region, because `firstAccepted` only moves for a token
+            // that earns it, so a genuine leading "I" or "a" is still left
+            // alone; one merely sitting between two rewritten words is
+            // carried along by the region that reaches the caret.
+            if carriesNoSignal(typed) { continue }
+
+            break
         }
 
         guard let firstAccepted else { return nil }
@@ -102,6 +117,14 @@ public enum Segmenter {
             typedText: typedText,
             letterCount: typedText.filter(\.isLetter).count,
             completedTokenCount: tokens[firstAccepted...].filter(\.isCompleted).count)
+    }
+
+    /// Whether a token is too short to be evidence for either language.
+    ///
+    /// Scoring one letter is a coin toss: the dictionaries exclude length-one
+    /// tokens by design, and a single character's bigram score says nothing.
+    private static func carriesNoSignal(_ typed: String) -> Bool {
+        typed.filter(\.isLetter).count <= 1
     }
 
     /// What those keys put on screen.

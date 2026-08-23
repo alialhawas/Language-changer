@@ -33,7 +33,7 @@ final class TypingPipeline {
     /// filters our own events by marker; this is the belt-and-braces second
     /// line, covering the tail of an injection that is still draining through
     /// the event system when the engine reports back.
-    static let applyTailWindow: TimeInterval = 0.3
+    static let applyTailWindow: TimeInterval = 0.12
 
     let queue = DispatchQueue(label: "com.ali.dodoma.pipeline", qos: .userInitiated)
 

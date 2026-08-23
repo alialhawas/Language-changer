@@ -87,13 +87,20 @@ final class FixEngine: FixApplying {
     /// Every delay in the sequence, in one place, so per-app tuning later is a
     /// table lookup rather than a hunt through the injector.
     enum Timing {
-        /// Between the individual backspace events. Apps that coalesce key
-        /// events start dropping deletes below roughly 8 ms.
-        static let backspaceInterval: TimeInterval = 0.010
+        /// Between the individual backspace events.
+        ///
+        /// Each deleted cluster costs two events, so this number is the single
+        /// biggest term in how long a fix takes and how long the user's own
+        /// typing is dropped for. At 10 ms a 23-character fix spent almost half
+        /// a second visibly erasing one letter at a time, which reads as the
+        /// machine seizing up mid-sentence. Apps that coalesce key events can
+        /// start dropping deletes when this goes too low; 3 ms is the fastest
+        /// value that still left every surface in the manual runbook intact.
+        static let backspaceInterval: TimeInterval = 0.003
         /// Let the app settle after the burst before text arrives.
-        static let postDeleteGap: TimeInterval = 0.040
+        static let postDeleteGap: TimeInterval = 0.015
         /// Between the events of the insertion.
-        static let insertInterval: TimeInterval = 0.006
+        static let insertInterval: TimeInterval = 0.002
         /// Wait between modifier pre-flight checks.
         static let modifierRetryDelay: TimeInterval = 0.150
         /// Pre-flight retries before giving up (so four checks in total).
@@ -101,7 +108,7 @@ final class FixEngine: FixApplying {
         /// How long to wait for the input source change to be confirmed.
         static let layoutSwitchTimeout: TimeInterval = 0.250
         /// UTF-16 units per injected chunk.
-        static let insertChunkLimit = 20
+        static let insertChunkLimit = 60
     }
 
     /// Modifiers that mean the keystroke stream is not plain typing.
