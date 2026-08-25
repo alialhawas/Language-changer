@@ -111,7 +111,34 @@ public enum Segmenter {
             break
         }
 
-        guard var firstAccepted else { return nil }
+        // The walk can also refuse to start at all.
+        //
+        // It reads right to left from the caret, so if the *last* token happens
+        // to be a real word of the language on screen it breaks on the first
+        // step and nothing is ever accepted. Typing "now i can merged ths dev
+        // to main" on the Arabic layout ends in وشهر, which strips to شهر —
+        // "month" — and the whole sentence was passed over. Whether the
+        // accident lands in the middle of the run or at the end of it is not a
+        // meaningful difference, so the same region-level question is asked
+        // here: is there a run ending at the caret that reads better under the
+        // other layout? Nothing is returned unless one does, and the decision
+        // thresholds still have to be met afterwards.
+        var accepted = firstAccepted
+        if accepted == nil {
+            var best: (position: Int, gap: Double)?
+            for position in stride(from: tokens.count - 1, through: 0, by: -1) {
+                let gap = regionGap(
+                    from: tokens[position].range.lowerBound, in: keys,
+                    currentLayout: currentLayout, alternateLayout: alternateLayout,
+                    models: models)
+                if best == nil || gap > best!.gap + extensionMargin {
+                    best = (position, gap)
+                }
+            }
+            if let best, best.gap > 0 { accepted = best.position }
+        }
+
+        guard var firstAccepted = accepted else { return nil }
 
         // The walk above stops at the first token the current language claims,
         // on the theory that a real word marks where deliberate typing began.

@@ -81,6 +81,24 @@ final class SegmenterTests: XCTestCase {
         XCTAssertEqual(region.typedText, "HGDML HSMDIH")
     }
 
+    /// Regression: the walk refused to start when the last token was a word.
+    ///
+    /// The walk reads right to left from the caret, so a real word of the
+    /// language on screen in the *final* position stopped it on the first step
+    /// and nothing was ever accepted. "now i can merged ths dev to main" typed
+    /// on the Arabic layout ends in وشهر, which strips to شهر — "month" — and
+    /// the whole sentence was passed over.
+    func testARealWordInTheFinalPositionDoesNotSuppressTheWholeRun() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.arabicKeys("رخص ه ذشر وثقلثي فاس يثد فخ وشهر")
+        let region = try XCTUnwrap(fixture.segment(keys, typedLanguage: .arabic))
+
+        XCTAssertTrue(
+            region.typedText.hasSuffix("وشهر"),
+            "the region has to reach the caret, got \(region.typedText)")
+        XCTAssertGreaterThanOrEqual(region.tokenCount, 6)
+    }
+
     func testPureEnglishBufferHasNoCandidate() throws {
         let fixture = try DetectorFixture.make()
         for text in [

@@ -46,6 +46,18 @@ public struct Thresholds: Equatable, Sendable {
     /// Minimum alternate score to suggest.
     public let suggestAlt: Double
 
+    /// Decisive shortcut: an overwhelming alternate reading with a wide
+    /// separation, which `autoCur` must not veto.
+    ///
+    /// `autoCur` asks whether the text on screen is plausible as it stands, and
+    /// a few accidental real words inflate it: "now i can merged ths dev to
+    /// main" typed on the Arabic layout ends in وشهر, which strips to شهر —
+    /// "month" — and lifted the typed reading to 0.33 against a ceiling of 0.28
+    /// even though the English reading scored 0.84 and the separation was 0.51.
+    /// When both of those hold there is no real ambiguity left to protect.
+    public static let decisiveAlt = 0.78
+    public static let decisiveGap = 0.50
+
     /// Dictionary shortcut: when the alternate rendering is almost entirely
     /// real words and the typed text is almost entirely not, the bigram gates
     /// are redundant.
@@ -249,7 +261,10 @@ public enum FixDecision {
                 alternate.dictCoverage >= Thresholds.dictOverrideAlt
                 && region.tokenCount >= Thresholds.dictOverrideTokens
                 && current.dictCoverage <= Thresholds.dictOverrideCur
-            if scoresOK || dictOverride { return .autoApply(fix) }
+            let decisive =
+                alternate.combined >= Thresholds.decisiveAlt
+                && gap >= Thresholds.decisiveGap
+            if scoresOK || dictOverride || decisive { return .autoApply(fix) }
         }
 
         let suggestAllowed = policy == .normal || policy == .suggestOnly

@@ -178,4 +178,24 @@ final class DecisionGateTests: XCTestCase {
         XCTAssertEqual(
             verdict(alt: score(0.50), cur: score(0.36), thresholds: .eager), "suggest")
     }
+    /// A decisive separation is not vetoed by an inflated typed-language score.
+    ///
+    /// `autoCur` asks whether the text on screen is plausible as it stands, and
+    /// accidental real words lift it: a sentence ending in وشهر — which strips
+    /// to "month" — reached cur 0.33 against a 0.28 ceiling while the other
+    /// reading scored 0.84. At that separation there is no ambiguity to protect.
+    func testADecisiveSeparationAutoAppliesAboveTheCurrentCeiling() {
+        XCTAssertEqual(verdict(alt: score(0.84), cur: score(0.33)), "autoApply")
+    }
+
+    /// The clause is deliberately narrow in both directions.
+    func testTheDecisiveClauseNeedsBothAStrongAlternateAndAWideGap() {
+        XCTAssertEqual(
+            verdict(alt: score(0.77), cur: score(0.33)), "suggest",
+            "just under decisiveAlt, and cur is over the ceiling")
+        XCTAssertEqual(
+            verdict(alt: score(0.80), cur: score(0.31)), "suggest",
+            "strong alternate but the 0.49 separation is under decisiveGap")
+    }
+
 }
