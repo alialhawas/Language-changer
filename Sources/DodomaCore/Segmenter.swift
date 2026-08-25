@@ -58,6 +58,12 @@ public enum Segmenter {
     /// A token is considered current-language text at or above this coverage.
     public static let coveredThreshold = 0.5
 
+    /// How much better a longer region must score before it is taken.
+    ///
+    /// A longer run has to earn its extra tokens rather than merely tie, so the
+    /// region never creeps outward on a rounding difference.
+    public static let extensionMargin = 0.05
+
     /// Keys whose produced text is a space. Tab and newline never reach here:
     /// the reset policy clears the buffer on both.
     private static let whitespaceTexts: Set<String> = [" ", "\u{00A0}"]
@@ -105,7 +111,37 @@ public enum Segmenter {
             break
         }
 
-        guard let firstAccepted else { return nil }
+        guard var firstAccepted else { return nil }
+
+        // The walk above stops at the first token the current language claims,
+        // on the theory that a real word marks where deliberate typing began.
+        // Two languages sharing one keyboard break that theory: "what is pr
+        // dojs" typed on the Arabic layout lands on "صاشف هس حق يختس", and حق
+        // is a real Arabic word. The wall went up mid-sentence and only the
+        // last token was ever offered.
+        //
+        // So having found where the walk stopped, ask the region-level
+        // question it cannot: does a longer run read better under the other
+        // layout than the one we settled on? For that sentence the whole buffer
+        // wins by 0.60 against 0.40. For "check this hgsghl" it loses, -0.23
+        // against 0.91, because pulling real English into the region wrecks it.
+        // Mixed-language text stays protected by arithmetic rather than by a
+        // rule that has to guess.
+        if firstAccepted > 0 {
+            var bestGap = regionGap(
+                from: tokens[firstAccepted].range.lowerBound, in: keys,
+                currentLayout: currentLayout, alternateLayout: alternateLayout, models: models)
+            for position in stride(from: firstAccepted - 1, through: 0, by: -1) {
+                let gap = regionGap(
+                    from: tokens[position].range.lowerBound, in: keys,
+                    currentLayout: currentLayout, alternateLayout: alternateLayout, models: models)
+                if gap > bestGap + extensionMargin {
+                    bestGap = gap
+                    firstAccepted = position
+                }
+            }
+        }
+
         let start = tokens[firstAccepted].range.lowerBound
         // Through the end of the buffer, not the end of the last token: the
         // region must reach the caret. See `CandidateRegion.keys`.
@@ -117,6 +153,23 @@ public enum Segmenter {
             typedText: typedText,
             letterCount: typedText.filter(\.isLetter).count,
             completedTokenCount: tokens[firstAccepted...].filter(\.isCompleted).count)
+    }
+
+    /// How much better the whole run from `start` reads under the other layout.
+    private static func regionGap(
+        from start: Int, in keys: [CapturedKey],
+        currentLayout: KeyboardLayout, alternateLayout: KeyboardLayout,
+        models: LanguageModelPair
+    ) -> Double {
+        let regionKeys = Array(keys[start...])
+        let current = models.current.combined(
+            onScreenText(of: regionKeys, layout: currentLayout)).combined
+        let alternate = CapsMode.allCases
+            .map { models.alternate.combined(
+                LayoutRenderer.render(regionKeys, layout: alternateLayout, capsMode: $0)
+            ).combined }
+            .max() ?? 0
+        return alternate - current
     }
 
     /// Whether a token is too short to be evidence for either language.

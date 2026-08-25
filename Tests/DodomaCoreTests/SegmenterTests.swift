@@ -51,6 +51,36 @@ final class SegmenterTests: XCTestCase {
         XCTAssertEqual(region.letterCount, 18)
     }
 
+    /// Regression: a real word of the current language used to end the region.
+    ///
+    /// Typing "what is pr dojs" on the Arabic layout produces
+    /// "صاشف هس حق يختس", and حق is a genuine Arabic word. Treating it as the
+    /// boundary of deliberate typing left three quarters of one English
+    /// sentence unconverted and offered only the trailing token, which at four
+    /// letters was too short to act on. The region-level comparison has to
+    /// reach past it.
+    func testARealWordOfTheCurrentLanguageDoesNotStrandTheRestOfTheRun() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.arabicKeys("صاشف هس حق يختس")
+        let region = try XCTUnwrap(fixture.segment(keys, typedLanguage: .arabic))
+
+        XCTAssertEqual(region.typedText, "صاشف هس حق يختس")
+        XCTAssertEqual(region.tokenCount, 4)
+    }
+
+    /// The other half: reaching past a word has to cost something.
+    ///
+    /// Here the trailing token already reads perfectly under the other layout,
+    /// so dragging real current-language text into the region can only make it
+    /// worse, and the region stays where the walk put it.
+    func testAStrongWordOfTheCurrentLanguageStillBoundsTheRegion() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.latinKeys("HSMDIH ha HGDML HSMDIH")
+        let region = try XCTUnwrap(fixture.segment(keys))
+
+        XCTAssertEqual(region.typedText, "HGDML HSMDIH")
+    }
+
     func testPureEnglishBufferHasNoCandidate() throws {
         let fixture = try DetectorFixture.make()
         for text in [
