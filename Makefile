@@ -9,7 +9,7 @@ CORPUS := Tests/DodomaCoreTests/Fixtures/corpus.tsv
 # SwiftPM resource bundle for the DodomaCore target: <package>_<target>.bundle
 RESOURCE_BUNDLE := Dodoma_DodomaCore.bundle
 
-.PHONY: build bundle sign install run test fixtures logs ngrams eval clean
+.PHONY: dmg build bundle sign install run test fixtures logs ngrams eval clean
 
 build:
 	swift build -c release
@@ -80,3 +80,6 @@ ngrams:
 
 clean:
 	rm -rf .build build
+
+dmg: build bundle sign ## Build a distributable disk image
+	./scripts/make-dmg.sh

@@ -83,6 +83,50 @@ suggestion card next to the caret; anything else is ignored and forgotten.
 
 ## Install
 
+### From a release
+
+Download the disk image, drag the app to Applications, and grant the two
+permissions it asks for.
+
+macOS will refuse to open it the first time. The build is signed, but with a
+self-signed certificate rather than an Apple Developer ID, so Gatekeeper treats
+it exactly as it treats any unnotarised download. To open it anyway: **System
+Settings → Privacy & Security**, scroll to the message naming Dodoma, and press
+**Open Anyway**. That is once, not every launch.
+
+### With Homebrew
+
+    brew install --cask --no-quarantine alialhawas/dodoma/dodoma
+
+`--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
+quarantines casks by default, and a quarantined unnotarised app is refused.
+
+### Building it yourself
+
+    scripts/make-cert.sh    # once — a stable signing identity, so the
+                            # permission grants survive rebuilds
+    make install            # build, sign, install to /Applications, launch
+
+`make dmg` produces the disk image.
+
+### What proper distribution would take
+
+Everything above works, and none of it is how a shipped Mac app should feel. The
+Gatekeeper friction has one cause: the app is not notarised. Fixing that is not a
+code change:
+
+| | |
+|---|---|
+| Apple Developer Program | $99/year |
+| Developer ID Application certificate | issued by Apple, replaces the self-signed one |
+| Hardened runtime + timestamp | flags on the existing `codesign` step |
+| Notarisation | `xcrun notarytool submit`, then `xcrun stapler staple` |
+
+With those, the disk image opens with a double-click and no warning, and the
+Homebrew cask no longer needs `--no-quarantine`. Nothing else about the app
+changes.
+
+
 ### 1. A stable code-signing identity (once)
 
 ```
