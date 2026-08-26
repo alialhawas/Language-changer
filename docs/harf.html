@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harf — your keyboard, in the language you meant</title>
+<meta name="description" content="Harf fixes text typed on the wrong keyboard layout. Type Arabic while the English layout is active and it rewrites it in place, switching the keyboard as it goes. macOS, offline, free.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0B0F14; --bg-2:#111820; --teal:#5bc2ab; --teal-dim:#5bc2ab26;
+  --text:#f1f3f6; --dim:#98a2b1; --mute:#6b7585; --line:#1c242e; --warn:#e6b45b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:Inter,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;line-height:1.6;overflow-x:hidden}
+canvas#stars{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 28px}
+.mono{font-family:'JetBrains Mono',monospace}
+.ar{font-family:'IBM Plex Sans Arabic',Inter,sans-serif;direction:rtl;unicode-bidi:isolate}
+
+/* nav */
+nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);
+  background:rgba(11,15,20,.72);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:66px}
+.brand{display:flex;align-items:center;gap:11px;font-weight:800;font-size:19px;letter-spacing:-.2px}
+.keycap{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;
+  background:linear-gradient(180deg,#1b2530,#141b24);border:1px solid #2a3644;
+  box-shadow:0 2px 0 #0a0e13,inset 0 1px 0 rgba(255,255,255,.06);position:relative;overflow:hidden}
+.keycap span{position:absolute;font-size:15px;font-weight:700;transition:opacity .45s,transform .45s}
+.keycap .lat{color:var(--text)}
+.keycap .arb{color:var(--teal);opacity:0;transform:translateY(7px)}
+.keycap.flip .lat{opacity:0;transform:translateY(-7px)}
+.keycap.flip .arb{opacity:1;transform:translateY(0)}
+nav a{color:var(--dim);text-decoration:none;font-size:14.5px;font-weight:500;margin-left:26px;transition:color .2s}
+nav a:hover{color:var(--text)}
+.nav-links{display:flex;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:11px 20px;border-radius:11px;
+  font-weight:600;font-size:14.5px;text-decoration:none;transition:all .2s;border:1px solid transparent}
+.btn-primary{background:var(--teal);color:#06231c;margin-left:26px}
+.btn-primary:hover{background:#6fd4bd;transform:translateY(-1px)}
+.btn-ghost{border-color:var(--line);color:var(--text);background:rgba(255,255,255,.02)}
+.btn-ghost:hover{border-color:var(--teal);color:var(--teal)}
+
+/* hero */
+header{padding:100px 0 80px;text-align:center}
+.pill{display:inline-flex;align-items:center;gap:9px;padding:7px 15px;border-radius:999px;
+  border:1px solid var(--line);background:rgba(255,255,255,.02);font-size:12.5px;color:var(--dim);
+  font-family:'JetBrains Mono',monospace;letter-spacing:.4px;margin-bottom:30px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--teal);box-shadow:0 0 9px var(--teal)}
+h1{font-size:clamp(42px,6.2vw,80px);font-weight:900;line-height:1.03;letter-spacing:-2.4px}
+h1 .accent{color:var(--teal)}
+.sub{max-width:660px;margin:24px auto 0;font-size:clamp(16px,1.6vw,20px);color:var(--dim)}
+.cta{display:flex;gap:14px;justify-content:center;margin-top:38px;flex-wrap:wrap}
+.req{margin-top:16px;font-size:13px;color:var(--mute);font-family:'JetBrains Mono',monospace}
+
+/* demo */
+.demo{margin:64px auto 0;max-width:760px;border:1px solid var(--line);border-radius:18px;
+  background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008));overflow:hidden;
+  box-shadow:0 30px 80px -30px rgba(0,0,0,.8)}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--line);
+  background:rgba(255,255,255,.015)}
+.tl{width:11px;height:11px;border-radius:50%}
+.demo-title{margin-left:10px;font-size:12.5px;color:var(--mute);font-family:'JetBrains Mono',monospace}
+.demo-body{padding:44px 34px 40px;text-align:left;min-height:190px;display:flex;flex-direction:column;justify-content:center}
+#typed{font-size:clamp(22px,3.4vw,34px);font-weight:600;letter-spacing:-.4px;min-height:48px;word-break:break-word}
+#typed.wrong{font-family:'JetBrains Mono',monospace;color:#e88f8f;font-weight:500}
+#typed.right{font-family:'IBM Plex Sans Arabic',sans-serif;color:var(--teal);direction:rtl}
+.caret{display:inline-block;width:2px;height:1em;background:var(--teal);vertical-align:-2px;
+  animation:blink 1.05s steps(1) infinite;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+.demo-status{margin-top:22px;font-size:13px;color:var(--mute);font-family:'JetBrains Mono',monospace;
+  min-height:20px;transition:color .3s}
+.demo-status.on{color:var(--teal)}
+
+/* sections */
+section{padding:96px 0;position:relative}
+.eyebrow{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:2.2px;
+  text-transform:uppercase;color:var(--teal);margin-bottom:16px}
+h2{font-size:clamp(30px,4.2vw,50px);font-weight:800;letter-spacing:-1.3px;line-height:1.12}
+h2 .accent{color:var(--teal)}
+.lede{max-width:720px;margin-top:18px;font-size:17px;color:var(--dim)}
+.grid{display:grid;gap:20px;margin-top:44px}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{padding:26px;border:1px solid var(--line);border-radius:15px;
+  background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.006));transition:all .25s}
+.card:hover{border-color:#2b3a49;transform:translateY(-3px)}
+.card h3{font-size:17.5px;font-weight:700;margin-bottom:9px;display:flex;align-items:center;gap:10px}
+.card p{font-size:14.6px;color:var(--dim)}
+.num{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal);
+  border:1px solid var(--teal-dim);border-radius:6px;padding:2px 7px;background:var(--teal-dim)}
+
+/* before/after */
+.ba{display:grid;grid-template-columns:1fr auto 1fr;gap:26px;align-items:center;margin-top:44px}
+.ba-box{padding:30px;border-radius:15px;border:1px solid var(--line);background:rgba(255,255,255,.02)}
+.ba-label{font-family:'JetBrains Mono',monospace;font-size:11.5px;letter-spacing:1.6px;
+  text-transform:uppercase;color:var(--mute);margin-bottom:14px}
+.ba-text{font-size:26px;font-weight:600}
+.ba-bad{font-family:'JetBrains Mono',monospace;color:#e88f8f;font-size:23px}
+.ba-good{font-family:'IBM Plex Sans Arabic',sans-serif;color:var(--teal);direction:rtl}
+.arrow{font-size:26px;color:var(--teal);opacity:.75}
+
+/* safety list */
+.safe{margin-top:40px;border:1px solid var(--line);border-radius:15px;overflow:hidden}
+.safe-row{display:grid;grid-template-columns:190px 1fr;gap:22px;padding:20px 26px;border-bottom:1px solid var(--line)}
+.safe-row:last-child{border-bottom:none}
+.safe-row:nth-child(odd){background:rgba(255,255,255,.012)}
+.safe-k{font-weight:650;font-size:15px;color:var(--text)}
+.safe-v{font-size:14.6px;color:var(--dim)}
+
+/* faq */
+details{border:1px solid var(--line);border-radius:13px;padding:20px 24px;margin-top:13px;
+  background:rgba(255,255,255,.015);cursor:pointer}
+details[open]{border-color:#2b3a49}
+summary{font-weight:650;font-size:16px;list-style:none;display:flex;justify-content:space-between;gap:16px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:'+';color:var(--teal);font-weight:400;font-size:21px;line-height:1}
+details[open] summary::after{content:'–'}
+details p{margin-top:13px;font-size:14.8px;color:var(--dim)}
+
+/* install */
+.steps{counter-reset:s;margin-top:36px}
+.step{display:grid;grid-template-columns:44px 1fr;gap:20px;padding:22px 0;border-bottom:1px solid var(--line)}
+.step:last-child{border-bottom:none}
+.step-n{counter-increment:s;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;
+  border:1px solid var(--teal-dim);background:var(--teal-dim);color:var(--teal);
+  font-family:'JetBrains Mono',monospace;font-size:13.5px;font-weight:600}
+.step-n::before{content:counter(s)}
+.step h4{font-size:16.5px;font-weight:650;margin-bottom:5px}
+.step p{font-size:14.6px;color:var(--dim)}
+code{font-family:'JetBrains Mono',monospace;font-size:13px;background:rgba(255,255,255,.05);
+  padding:2.5px 7px;border-radius:5px;color:var(--teal);border:1px solid var(--line)}
+
+footer{border-top:1px solid var(--line);padding:52px 0 64px;margin-top:40px}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap}
+.foot p{font-size:13.6px;color:var(--mute)}
+.foot a{color:var(--dim);text-decoration:none;font-size:13.6px;margin-left:22px}
+.foot a:hover{color:var(--teal)}
+
+@media(max-width:860px){
+  .g3,.g2{grid-template-columns:1fr}
+  .ba{grid-template-columns:1fr;gap:16px}
+  .arrow{transform:rotate(90deg);text-align:center}
+  .nav-links a:not(.btn){display:none}
+  .safe-row{grid-template-columns:1fr;gap:6px}
+  section{padding:70px 0}
+}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav><div class="wrap">
+  <div class="brand">
+    <div class="keycap" id="cap"><span class="lat">H</span><span class="arb">ح</span></div>
+    Harf
+  </div>
+  <div class="nav-links">
+    <a href="#problem">The problem</a>
+    <a href="#how">How it works</a>
+    <a href="#safety">Safety</a>
+    <a href="#install">Install</a>
+    <a class="btn btn-primary" href="#install">Download</a>
+  </div>
+</div></nav>
+
+<header><div class="wrap">
+  <div class="pill"><span class="dot"></span> macOS · offline · free &amp; open source</div>
+  <h1>You typed it right.<br>The <span class="accent">keyboard</span> was wrong.</h1>
+  <p class="sub">Harf notices when a sentence only makes sense under the other layout, rewrites it in place, and switches your keyboard as it goes. Arabic and English, both directions, without you touching anything.</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="#install">Download for macOS</a>
+    <a class="btn btn-ghost" href="https://github.com/alialhawas/Language-changer">View source</a>
+  </div>
+  <p class="req">macOS 14+ · Apple silicon &amp; Intel · nothing leaves your Mac</p>
+
+  <div class="demo">
+    <div class="demo-bar">
+      <span class="tl" style="background:#ff5f57"></span>
+      <span class="tl" style="background:#febc2e"></span>
+      <span class="tl" style="background:#28c840"></span>
+      <span class="demo-title">Messages</span>
+    </div>
+    <div class="demo-body">
+      <div id="typed" class="wrong"><span class="caret"></span></div>
+      <div class="demo-status" id="status">&nbsp;</div>
+    </div>
+  </div>
+</div></header>
+
+<section id="problem"><div class="wrap">
+  <div class="eyebrow">The problem</div>
+  <h2>Nobody forgets the language.<br>Everybody forgets <span class="accent">the layout.</span></h2>
+  <p class="lede">You switch to English to paste a link, then come back to write in Arabic and start typing. Nothing warns you. The first sign anything is wrong is a line of nonsense — and every key you pressed was already the right key.</p>
+  <div class="ba">
+    <div class="ba-box">
+      <div class="ba-label">what appears</div>
+      <div class="ba-text ba-bad">hgsghl ugd;l</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="ba-box">
+      <div class="ba-label">what you meant</div>
+      <div class="ba-text ba-good">السلام عليكم</div>
+    </div>
+  </div>
+  <div class="grid g3">
+    <div class="card"><h3>The old fix</h3><p>Select the line. Delete it. Find the layout switcher. Type the whole thing again. A dozen times a day.</p></div>
+    <div class="card"><h3>Both directions</h3><p>English typed on the Arabic layout comes out as <span class="mono ar">اخص ه</span> — and turns back into "how i" just as readily.</p></div>
+    <div class="card"><h3>The real cost</h3><p>Not the seconds. The interruption — you lose the sentence you were composing while you fight the keyboard.</p></div>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <div class="eyebrow">How it works</div>
+  <h2>It reads the <span class="accent">keys</span>, not the letters.</h2>
+  <p class="lede">The letters on screen are already the mistake. The physical key you pressed is identical in both layouts — so what you meant is recoverable exactly, with no guessing and no autocorrect-style rewriting of your words.</p>
+  <div class="grid g3">
+    <div class="card"><h3><span class="num">01</span> Records keys</h3><p>Every keystroke is stored as a key position, not a character. Nothing is read off your screen and nothing is written to disk.</p></div>
+    <div class="card"><h3><span class="num">02</span> Reads it twice</h3><p>On a one-second pause, that key sequence is rendered through both layouts using macOS's own tables — real text, not a substitution table.</p></div>
+    <div class="card"><h3><span class="num">03</span> Scores and acts</h3><p>Both readings are scored offline against bundled dictionaries. A clear winner is rewritten silently; a close call is offered as a card you accept with Tab.</p></div>
+  </div>
+</div></section>
+
+<section id="safety"><div class="wrap">
+  <div class="eyebrow">Safety</div>
+  <h2>It deletes your text.<br>So it is <span class="accent">careful</span> about it.</h2>
+  <p class="lede">An app that edits what you wrote without asking has to earn that. Every one of these can only ever cancel a rewrite — none of them can cause one.</p>
+  <div class="safe">
+    <div class="safe-row"><div class="safe-k">Password fields</div><div class="safe-v">Secure fields are never captured, and the keystroke history is purged the moment one is detected.</div></div>
+    <div class="safe-row"><div class="safe-k">Terminals</div><div class="safe-v">Suggest-only by default. A wrong rewrite in a shell is worse than a wrong rewrite in a sentence.</div></div>
+    <div class="safe-row"><div class="safe-k">Verify before deleting</div><div class="safe-v">The app is asked what sits in front of the caret. If the answer disagrees with what Harf recorded, it refuses and offers a suggestion instead.</div></div>
+    <div class="safe-row"><div class="safe-k">Only the trailing run</div><div class="safe-v">A bilingual line is never wholesale rewritten — only the stretch that reads better under the other layout.</div></div>
+    <div class="safe-row"><div class="safe-k">Code is left alone</div><div class="safe-v">URLs, paths, emails, identifiers, version strings and shell commands are recognised and skipped.</div></div>
+    <div class="safe-row"><div class="safe-k">One key undoes it</div><div class="safe-v"><code>⌥⌘Z</code> restores exactly what you typed and switches the layout back. <code>⌥⌘P</code> pauses everything, instantly.</div></div>
+    <div class="safe-row"><div class="safe-k">No network</div><div class="safe-v">There is no networking code in the app at all. The dictionaries ship inside it.</div></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow">Details</div>
+  <h2>Quiet by <span class="accent">default.</span></h2>
+  <div class="grid g2">
+    <div class="card"><h3>Fast enough to miss</h3><p>A full sentence is replaced in about 160 ms. You see the corrected text, not the correction happening.</p></div>
+    <div class="card"><h3>Per-app control</h3><p>Set any app to Normal, Suggest-only, or Off. Terminals and password managers are already configured for you.</p></div>
+    <div class="card"><h3>Three sensitivities</h3><p>Conservative, Balanced or Eager — one slider that moves every threshold together, so there is a single thing to reason about.</p></div>
+    <div class="card"><h3>Menu bar only</h3><p>No Dock icon, no windows in your way. Roughly 0% CPU while you type.</p></div>
+  </div>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <div class="eyebrow">Install</div>
+  <h2>Four steps, <span class="accent">once.</span></h2>
+  <div class="steps">
+    <div class="step"><div class="step-n"></div><div><h4>Get it</h4><p>Download the app, or clone the repository and run <code>make install</code> to build from source.</p></div></div>
+    <div class="step"><div class="step-n"></div><div><h4>Grant two permissions</h4><p><strong>Input Monitoring</strong> lets Harf see the keys you press. <strong>Accessibility</strong> lets it replace the text. It cannot work with only one.</p></div></div>
+    <div class="step"><div class="step-n"></div><div><h4>Type something wrong</h4><p>With the English layout active, type <code>hgsghl ugd;l</code> and pause for a second. It becomes <span class="ar" style="color:var(--teal)">السلام عليكم</span>.</p></div></div>
+    <div class="step"><div class="step-n"></div><div><h4>Forget about it</h4><p>That is the whole product. You stop noticing that you ever forgot to switch.</p></div></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow">Questions</div>
+  <h2>Reasonable <span class="accent">doubts.</span></h2>
+  <details><summary>Does it send my keystrokes anywhere?</summary><p>No. There is no networking code in the app — you can check, the source is public. The word lists are bundled inside the app and every decision is made on your Mac. Nothing is written to disk either; the buffer holds at most 200 keys in memory and is cleared constantly.</p></details>
+  <details><summary>What if it rewrites something I meant?</summary><p><code>⌥⌘Z</code> puts it back exactly and switches the layout back, for 30 seconds after any fix. It also stops re-fixing that text so it cannot bounce. In practice it is conservative: normal writing in either language never triggers anything.</p></details>
+  <details><summary>Will it mangle my code or terminal commands?</summary><p>URLs, file paths, emails, camelCase and snake_case identifiers, version strings and anything with digits touching letters are all skipped outright. Terminals are suggest-only by default, so nothing is ever rewritten in a shell without you pressing Tab.</p></details>
+  <details><summary>Does it work in every app?</summary><p>Most. Some apps that draw their editor in a web view cannot tell Harf what is in front of the caret, and there it offers a suggestion rather than rewriting silently — deliberately, because deleting text it cannot verify is how a tool like this corrupts your work.</p></details>
+  <details><summary>Why not just autocorrect?</summary><p>Autocorrect guesses at what you meant from letters that are already wrong. Harf does not guess: it replays the exact keys you pressed through the other layout, so the result is precisely what you would have typed had the layout been right.</p></details>
+</div></section>
+
+<footer><div class="wrap foot">
+  <p>Harf — <span class="ar">حرف</span> — "letter". Free and open source.</p>
+  <div>
+    <a href="https://github.com/alialhawas/Language-changer">GitHub</a>
+    <a href="#install">Install</a>
+    <a href="#safety">Safety</a>
+  </div>
+</div></footer>
+
+<script>
+/* gravity stars — the same simulation the app draws in its own windows */
+(function(){
+  const c=document.getElementById('stars'),x=c.getContext('2d');
+  let w=0,h=0,dpr=Math.min(devicePixelRatio||1,2),stars=[],m={x:-9999,y:-9999};
+  function size(){w=innerWidth;h=innerHeight;c.width=w*dpr;c.height=h*dpr;
+    x.setTransform(dpr,0,0,dpr,0,0);
+    if(!stars.length)seed();}
+  function seed(){stars=Array.from({length:90},()=>{const a=Math.random()*Math.PI*2,s=.3*(.5+Math.random()*.5);
+    return{x:Math.random()*w,y:Math.random()*h,vx:Math.cos(a)*s,vy:Math.sin(a)*s,
+      r:Math.random()*2.2+1,o:.75,base:.75,g:1};});}
+  addEventListener('resize',size);
+  addEventListener('mousemove',e=>{m.x=e.clientX;m.y=e.clientY;});
+  (function loop(){
+    x.clearRect(0,0,w,h);
+    for(const p of stars){
+      const dx=m.x-p.x,dy=m.y-p.y,d=Math.hypot(dx,dy);
+      if(d<100&&d>0){const f=(100-d)/100,g=f*.075;
+        p.vx+=dx/d*g;p.vy+=dy/d*g;
+        p.o=Math.min(1,p.base+f*.4);p.g+=(1+f*2-p.g)*.15;}
+      else{p.o=Math.max(p.base*.3,p.o-.02);p.g=Math.max(1,p.g+(1-p.g)*.08);}
+      p.x+=p.vx;p.y+=p.vy;p.vx*=.999;p.vy*=.999;
+      if(p.x<0)p.x=w;if(p.x>w)p.x=0;if(p.y<0)p.y=h;if(p.y>h)p.y=0;
+      const bloom=p.r*(2.5+15*.08*p.g);
+      x.beginPath();x.arc(p.x,p.y,bloom,0,7);x.fillStyle='rgba(190,235,225,'+(p.o*.10*p.g)+')';x.fill();
+      x.beginPath();x.arc(p.x,p.y,p.r,0,7);x.fillStyle='rgba(222,244,239,'+p.o+')';x.fill();
+    }
+    requestAnimationFrame(loop);
+  })();
+  size();
+})();
+
+/* hero demo: type the wrong-layout text, pause, flip it */
+(function(){
+  const el=document.getElementById('typed'),st=document.getElementById('status'),cap=document.getElementById('cap');
+  const wrong='hgsghl ugd;l', right='السلام عليكم';
+  const caret='<span class="caret"></span>';
+  function run(){
+    el.className='wrong';el.innerHTML=caret;st.textContent=' ';st.className='demo-status';
+    cap.classList.remove('flip');
+    let i=0;
+    const type=setInterval(()=>{
+      i++;el.innerHTML=wrong.slice(0,i)+caret;
+      if(i>=wrong.length){clearInterval(type);
+        setTimeout(()=>{st.textContent='pause detected — reading it under the other layout…';},380);
+        setTimeout(()=>{
+          el.className='right';el.innerHTML=right+caret;
+          st.textContent='rewritten · keyboard switched to Arabic';st.className='demo-status on';
+          cap.classList.add('flip');
+        },1500);
+        setTimeout(run,5200);
+      }
+    },105);
+  }
+  run();
+})();
+</script>
+</body>
+</html>
