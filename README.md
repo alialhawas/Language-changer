@@ -40,13 +40,21 @@ active comes out as `اخص ه`, and gets turned back into `how i`.
 
 ## How it works
 
+<p align="center">
+  <img src="docs/how-it-works.svg" alt="Keystrokes are captured as keycodes, buffered, and on a one-second pause rendered through both keyboard layouts. Both readings are scored offline; a decisively better reading passes the safety gates and is rewritten in place, a borderline one is offered as a suggestion, and anything else is left alone." width="100%">
+</p>
+
+The diagram is also available as an [editable Excalidraw
+canvas](docs/dodoma-how-it-works.excalidraw) — drag it onto
+[excalidraw.com](https://excalidraw.com) to rearrange it.
+
 Three illustrated walkthroughs live in `docs/`. Each opens straight from the
 browser — no checkout required:
 
 | | What it is | Open it |
 |---|---|---|
 | **Slide deck** | 13 slides covering the whole pipeline, the safety gates, and the two bugs that only live use found. Arrow keys or space to advance. | [view](https://htmlpreview.github.io/?https://raw.githubusercontent.com/alialhawas/Language-changer/auto-detect-keyboard-language-switch/docs/how-it-works.html) · [source](docs/how-it-works.html) |
-| **Diagram** | The same flow as one editable canvas — every box and arrow can be moved. | [open in Excalidraw](https://excalidraw.com/#url=https://raw.githubusercontent.com/alialhawas/Language-changer/auto-detect-keyboard-language-switch/docs/dodoma-how-it-works.excalidraw) · [source](docs/dodoma-how-it-works.excalidraw) |
+| **Diagram** | The flow above as an editable canvas — every box and arrow can be moved. | [open in Excalidraw](https://excalidraw.com/#url=https://raw.githubusercontent.com/alialhawas/Language-changer/auto-detect-keyboard-language-switch/docs/dodoma-how-it-works.excalidraw) · [SVG](docs/how-it-works.svg) |
 | **Capture &amp; segmentation** | 10 slides answering one question in detail: is text judged word by word or a line at a time, and how are the words captured in the first place. | [view](https://htmlpreview.github.io/?https://raw.githubusercontent.com/alialhawas/Language-changer/auto-detect-keyboard-language-switch/docs/how-capture-works.html) · [source](docs/how-capture-works.html) |
 | **Video** | A narrated walkthrough of the same material, for watching rather than clicking. | [docs/how-it-works.mp4](docs/how-it-works.mp4) |
 
