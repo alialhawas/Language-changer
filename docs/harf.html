@@ -38,12 +38,25 @@ nav .wrap{display:flex;align-items:center;justify-content:space-between;height:6
 nav a{color:var(--dim);text-decoration:none;font-size:14.5px;font-weight:500;margin-left:26px;transition:color .2s}
 nav a:hover{color:var(--text)}
 .nav-links{display:flex;align-items:center}
-.btn{display:inline-flex;align-items:center;gap:9px;padding:11px 20px;border-radius:11px;
-  font-weight:600;font-size:14.5px;text-decoration:none;transition:all .2s;border:1px solid transparent}
-.btn-primary{background:var(--teal);color:#06231c;margin-left:26px}
-.btn-primary:hover{background:#6fd4bd;transform:translateY(-1px)}
-.btn-ghost{border-color:var(--line);color:var(--text);background:rgba(255,255,255,.02)}
-.btn-ghost:hover{border-color:var(--teal);color:var(--teal)}
+/* Liquid Button — ported from Animate UI (primitives/buttons/liquid).
+   The effect is pure CSS: a gradient sits off-canvas as a 3px sliver at rest,
+   slides in on hover, then swells to full height a beat later. The staggered
+   delays are what make it read as liquid rather than as a wipe. Motion only
+   supplied the scale, which :hover and :active do natively. */
+.btn{--fill-w:-1%;--fill-h:3px;--delay:0s;
+  display:inline-flex;align-items:center;gap:9px;padding:11px 20px;border-radius:11px;
+  font-weight:600;font-size:14.5px;text-decoration:none;border:1px solid transparent;
+  background:linear-gradient(var(--liquid) 0 0) no-repeat calc(200% - var(--fill-w)) 100% / 200% var(--fill-h);
+  background-color:var(--rest);
+  transition:background .34s var(--delay), color .34s .34s,
+             background-position .34s calc(.34s - var(--delay)), transform .22s ease}
+.btn:hover{--fill-w:100%;--fill-h:100%;--delay:.34s;transform:scale(1.05)}
+.btn:active{transform:scale(.95)}
+.btn-primary{--rest:var(--teal);--liquid:#eafaf5;color:#06231c;margin-left:26px}
+.btn-primary:hover{color:#06231c}
+.btn-ghost{--rest:rgba(255,255,255,.02);--liquid:var(--teal);
+  border-color:var(--line);color:var(--text)}
+.btn-ghost:hover{color:#06231c;border-color:var(--teal)}
 
 /* hero */
 header{padding:100px 0 80px;text-align:center}
