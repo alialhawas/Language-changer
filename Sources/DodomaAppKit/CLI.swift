@@ -9,8 +9,8 @@ public enum CLI {
         case render(text: String?)
         case dumpLayoutFixtures(path: String?)
         case score(text: String?)
-        case decide(text: String?, language: String?, aggressiveness: String?)
-        case eval(path: String?, aggressiveness: String?)
+        case decide(text: String?, language: String?, aggressiveness: String?, confident: String?)
+        case eval(path: String?, aggressiveness: String?, confident: String?)
     }
 
     /// Layouts snapshotted into the test fixture. Tests render through these
@@ -41,9 +41,11 @@ public enum CLI {
                 return .decide(
                     text: next,
                     language: value(after: "--lang"),
-                    aggressiveness: value(after: "--aggressiveness"))
+                    aggressiveness: value(after: "--aggressiveness"),
+                    confident: value(after: "--confident"))
             case "--eval":
-                return .eval(path: next, aggressiveness: value(after: "--aggressiveness"))
+                return .eval(path: next, aggressiveness: value(after: "--aggressiveness"),
+                             confident: value(after: "--confident"))
             default:
                 continue
             }
@@ -68,16 +70,17 @@ public enum CLI {
                 return fail("--score: expected a TEXT argument", code: 2)
             }
             return score(text)
-        case .decide(let text, let language, let aggressiveness):
+        case .decide(let text, let language, let aggressiveness, let confident):
             guard let text else {
                 return fail("--decide: expected a TEXT argument", code: 2)
             }
-            return decide(text, language: language, aggressiveness: aggressiveness)
-        case .eval(let path, let aggressiveness):
+            return decide(
+                text, language: language, aggressiveness: aggressiveness, confident: confident)
+        case .eval(let path, let aggressiveness, let confident):
             guard let path else {
                 return fail("--eval: expected a corpus path", code: 2)
             }
-            return eval(path, aggressiveness: aggressiveness)
+            return eval(path, aggressiveness: aggressiveness, confident: confident)
         }
     }
 
@@ -100,9 +103,9 @@ public enum CLI {
 
     // MARK: - Deciding
 
-    private static func decide(_ text: String, language: String?, aggressiveness: String?)
-        -> Int32
-    {
+    private static func decide(
+        _ text: String, language: String?, aggressiveness: String?, confident: String?
+    ) -> Int32 {
         if let message = preloadModels() { return fail("--decide: \(message)", code: 1) }
         guard let detector = liveDetector() else {
             return fail(
@@ -131,8 +134,10 @@ public enum CLI {
         }
 
         let sourceLayout = detector.layout(for: typedLanguage)
+        let confidentScore = confident.flatMap(Double.init)
         guard let detection = detector.detect(text: text, typedLanguage: typedLanguage,
-                                              aggressiveness: level)
+                                              aggressiveness: level,
+                                              confidentScore: confidentScore)
         else {
             let character = InverseKeymap.unmappableCharacter(in: text, layout: sourceLayout)
             return fail(
@@ -189,7 +194,9 @@ public enum CLI {
 
     // MARK: - Eval
 
-    private static func eval(_ path: String, aggressiveness: String?) -> Int32 {
+    private static func eval(_ path: String, aggressiveness: String?, confident: String?)
+        -> Int32
+    {
         if let message = preloadModels() { return fail("--eval: \(message)", code: 1) }
         guard let detector = liveDetector() else {
             return fail(
@@ -214,7 +221,9 @@ public enum CLI {
             return fail("--eval: \(error)", code: 2)
         }
 
-        let report = EvalHarness.run(rows: rows, detector: detector, aggressiveness: level)
+        let report = EvalHarness.run(
+            rows: rows, detector: detector, aggressiveness: level,
+            confidentScore: confident.flatMap(Double.init))
         print(report.render())
         return report.exitCode
     }

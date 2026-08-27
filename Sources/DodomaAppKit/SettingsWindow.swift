@@ -108,6 +108,11 @@ final class SettingsModel: ObservableObject {
         accept(store.settings)
     }
 
+    func setConfidentScore(_ score: Double?) {
+        store.setConfidentScore(score)
+        accept(store.settings)
+    }
+
     func setPaused(_ paused: Bool) {
         store.setPaused(paused)
         accept(store.settings)
@@ -302,6 +307,26 @@ private struct GeneralTab: View {
             Divider()
 
             Section {
+                Toggle("Fix short text when the score is high", isOn: confidenceEnabled)
+                if let score = model.settings.confidentScore {
+                    HStack(spacing: 12) {
+                        Slider(value: confidenceScore, in: 0.60...0.99, step: 0.01)
+                        Text(SettingsCopy.percent(score))
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(DodomaTheme.accent)
+                            .frame(width: 46, alignment: .trailing)
+                            .monospacedDigit()
+                    }
+                }
+                Text(SettingsCopy.confidenceExplanation(model.settings.confidentScore))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            Section {
                 Toggle("Pause Dodoma", isOn: paused)
                 Text("Nothing is buffered, evaluated or rewritten while this is on. "
                     + "The same switch as ⌘⌥P and the menu item.")
@@ -338,6 +363,21 @@ private struct GeneralTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Turning the rule off restores the length rules; turning it on returns
+    /// to a deliberately cautious score rather than wherever the slider last
+    /// sat, so an accidental toggle cannot leave it wide open.
+    private var confidenceEnabled: Binding<Bool> {
+        Binding(
+            get: { model.settings.confidentScore != nil },
+            set: { model.setConfidentScore($0 ? (model.settings.confidentScore ?? 0.90) : nil) })
+    }
+
+    private var confidenceScore: Binding<Double> {
+        Binding(
+            get: { model.settings.confidentScore ?? 0.90 },
+            set: { model.setConfidentScore($0) })
     }
 
     private var aggressiveness: Binding<Aggressiveness> {
@@ -557,6 +597,22 @@ private enum AppChooser {
 
 /// Every user-facing string in the settings window, in one place.
 enum SettingsCopy {
+    static func percent(_ score: Double) -> String { "\(Int((score * 100).rounded()))%" }
+
+    /// What the confidence rule is for, in the terms the user meets it in: a
+    /// single word that was plainly wrong and was not corrected.
+    static func confidenceExplanation(_ score: Double?) -> String {
+        guard let score else {
+            return "Off. A single word is never rewritten silently, however certain the "
+                + "reading is; it is offered as a suggestion instead. Turn this on if short "
+                + "words are the ones you keep fixing by hand."
+        }
+        return "A run scoring at least \(percent(score)) in the other layout is "
+            + "rewritten even when it is one short word. Below that, the usual length rules "
+            + "apply. Text under three letters is never rewritten, and a URL, a path or an "
+            + "identifier is left alone at any setting."
+    }
+
     static func title(_ level: Aggressiveness) -> String {
         switch level {
         case .conservative: return "Conservative"

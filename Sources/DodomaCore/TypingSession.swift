@@ -128,6 +128,7 @@ public final class TypingSession {
         detector: Detector,
         policy: AppPolicy,
         aggressiveness: Aggressiveness,
+        confidentScore: Double? = nil,
         recentlyUndone: Set<String> = []
     ) -> Detector.Detection? {
         let keys = buffer.keys
@@ -136,7 +137,7 @@ public final class TypingSession {
             keys: keys,
             typedLanguage: Detector.scriptLanguage(of: buffer.currentText),
             policy: policy,
-            aggressiveness: aggressiveness,
+            aggressiveness: aggressiveness, confidentScore: confidentScore,
             recentlyUndone: recentlyUndone)
     }
 

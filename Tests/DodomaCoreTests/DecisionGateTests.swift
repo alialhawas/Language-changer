@@ -198,4 +198,58 @@ final class DecisionGateTests: XCTestCase {
             "strong alternate but the 0.49 separation is under decisiveGap")
     }
 
+    /// A score high enough to speak for itself carries text too short for the
+    /// length rules. This is the whole point of the setting: "what" typed on
+    /// the Arabic layout reads 0.999 against 0.24 and used to be held back by
+    /// a rule about how little four letters usually prove.
+    func testAConfidentScoreCarriesTextTooShortForTheLengthRules() {
+        XCTAssertEqual(
+            verdict(alt: score(0.95), cur: score(0.10), letters: 4, completed: 0, tokens: 1,
+                    guards: GuardResult(vetoes: [.shortSingleToken]),
+                    thresholds: .balanced.withConfidentScore(0.90)),
+            "autoApply")
+    }
+
+    /// Off by default in the sense that matters: with no threshold set, the
+    /// same input is only ever offered.
+    func testWithoutAConfidentScoreShortTextIsOnlySuggested() {
+        XCTAssertEqual(
+            verdict(alt: score(0.95), cur: score(0.10), letters: 4, completed: 0, tokens: 1,
+                    guards: GuardResult(vetoes: [.shortSingleToken])),
+            "suggest")
+    }
+
+    /// Confidence waives shortness and nothing else. A path or an identifier is
+    /// a statement that the text is not prose, which no score answers.
+    func testAConfidentScoreDoesNotWaiveTheOtherGuards() {
+        for veto in [GuardReason.urlOrPath, .identifierCase, .digitsAdjacent, .recentlyUndone] {
+            XCTAssertEqual(
+                verdict(alt: score(0.99), cur: score(0.02), letters: 4, completed: 0, tokens: 1,
+                        guards: GuardResult(vetoes: [.shortSingleToken, veto]),
+                        thresholds: .balanced.withConfidentScore(0.90)),
+                "ignore", "\(veto.rawValue) must still block")
+        }
+    }
+
+    /// Two letters is not evidence at any score.
+    func testAConfidentScoreStillRefusesTwoLetters() {
+        XCTAssertEqual(
+            verdict(alt: score(0.99), cur: score(0.02), letters: 2, completed: 0, tokens: 1,
+                    guards: GuardResult(vetoes: [.shortSingleToken]),
+                    thresholds: .balanced.withConfidentScore(0.90)),
+            "ignore")
+    }
+
+    /// And a narrow separation is not either, however high the alternate reads:
+    /// a word merely plausible in both languages must not be rewritten.
+    func testAConfidentScoreStillNeedsASeparation() {
+        XCTAssertEqual(
+            verdict(alt: score(0.95), cur: score(0.60), letters: 4, completed: 0, tokens: 1,
+                    guards: GuardResult(vetoes: [.shortSingleToken]),
+                    thresholds: .balanced.withConfidentScore(0.90)),
+            "suggest",
+            "0.35 of separation is under confidentMinGap, so the confident path "
+                + "refuses and the ordinary suggestion path takes it instead")
+    }
+
 }

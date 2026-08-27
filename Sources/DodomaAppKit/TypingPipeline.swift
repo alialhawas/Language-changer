@@ -516,6 +516,7 @@ final class TypingPipeline {
         guard
             let detection = session.evaluate(
                 detector: detector, policy: policy, aggressiveness: settings.aggressiveness,
+                confidentScore: settings.confidentScore,
                 recentlyUndone: undoSuppression.texts(bundleID: bundleID, at: now))
         else { return }
         let duration = Self.now() - started

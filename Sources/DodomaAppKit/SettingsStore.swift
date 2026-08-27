@@ -81,6 +81,8 @@ final class SettingsStore {
 
     var aggressiveness: Aggressiveness { settings.aggressiveness }
 
+    var confidentScore: Double? { settings.confidentScore }
+
     var paused: Bool { settings.paused }
 
     /// The blob's value, or the bare key, whichever is on.
@@ -94,6 +96,12 @@ final class SettingsStore {
 
     func setPaused(_ paused: Bool) {
         mutate { $0.paused = paused }
+    }
+
+    /// nil turns the confidence rule off and returns the length rules to
+    /// charge; any value is clamped into the range the slider can reach.
+    func setConfidentScore(_ score: Double?) {
+        mutate { $0.confidentScore = score.map { min(max($0, 0.60), 0.99) } }
     }
 
     func setPolicy(_ policy: AppPolicy, for bundleID: String) {

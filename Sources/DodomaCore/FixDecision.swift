@@ -46,6 +46,18 @@ public struct Thresholds: Equatable, Sendable {
     /// Minimum alternate score to suggest.
     public let suggestAlt: Double
 
+    /// Score at which a fix is taken however short the text is, or nil to
+    /// leave the length rules in charge.
+    ///
+    /// The length rules exist because short text is usually weak evidence: two
+    /// letters can land on a real word in either language by luck. But that is
+    /// a statement about the *average* short token, and the score already says
+    /// which one is in front of us. "what" typed on the Arabic layout reads
+    /// 0.999 against 0.24 — the rules were holding back a certainty because of
+    /// a rule about uncertainty. Above this number the evidence speaks for
+    /// itself; below it the length rules still apply.
+    public var confidentScore: Double?
+
     /// Decisive shortcut: an overwhelming alternate reading with a wide
     /// separation, which `autoCur` must not veto.
     ///
@@ -69,12 +81,33 @@ public struct Thresholds: Equatable, Sendable {
     public static let autoMinLetters = 6
     public static let suggestMinLetters = 4
 
+    /// Letters a region needs before the score is allowed to speak for it.
+    ///
+    /// Two letters is not evidence at any score: the dictionaries weight
+    /// two-letter tokens at half and a great many of them are real words in
+    /// both languages. Three is where a reading starts to mean something.
+    public static let confidentMinLetters = 3
+
+    /// The separation a confident fix still has to clear.
+    ///
+    /// Skipping the length rules is not the same as skipping the comparison:
+    /// the other reading must still be decisively better, or a word that is
+    /// merely plausible in both languages would be rewritten.
+    public static let confidentMinGap = 0.45
+
     public static let balanced = Thresholds(
         autoAlt: 0.62, autoCur: 0.28, autoGap: 0.40, suggestGap: 0.18, suggestAlt: 0.45)
     public static let conservative = Thresholds(
         autoAlt: 0.70, autoCur: 0.20, autoGap: 0.48, suggestGap: 0.26, suggestAlt: 0.45)
     public static let eager = Thresholds(
         autoAlt: 0.56, autoCur: 0.34, autoGap: 0.34, suggestGap: 0.12, suggestAlt: 0.45)
+
+    /// The same cut-offs with a confidence threshold attached.
+    public func withConfidentScore(_ score: Double?) -> Thresholds {
+        var copy = self
+        copy.confidentScore = score
+        return copy
+    }
 }
 
 /// A concrete edit, expressed relative to the caret.
@@ -165,7 +198,8 @@ public enum FixDecision {
         models: LanguageModelPair,
         guards: GuardResult,
         policy: AppPolicy = .normal,
-        aggressiveness: Aggressiveness = .balanced
+        aggressiveness: Aggressiveness = .balanced,
+        confidentScore: Double? = nil
     ) -> Decision {
         analyse(
             region: region,
@@ -174,7 +208,7 @@ public enum FixDecision {
             models: models,
             guards: guards,
             policy: policy,
-            aggressiveness: aggressiveness
+            aggressiveness: aggressiveness, confidentScore: confidentScore
         ).decision
     }
 
@@ -185,9 +219,10 @@ public enum FixDecision {
         models: LanguageModelPair,
         guards: GuardResult,
         policy: AppPolicy = .normal,
-        aggressiveness: Aggressiveness = .balanced
+        aggressiveness: Aggressiveness = .balanced,
+        confidentScore: Double? = nil
     ) -> FixAnalysis {
-        let thresholds = aggressiveness.thresholds
+        let thresholds = aggressiveness.thresholds.withConfidentScore(confidentScore)
         let current = models.current.combined(region.typedText)
 
         guard policy != .off else {
@@ -251,6 +286,20 @@ public enum FixDecision {
         let lengthOK = region.letterCount >= Thresholds.autoMinLetters
         let completedOK = region.completedTokenCount >= 1
         let autoAllowed = policy == .normal && guards.isEmpty && lengthOK && completedOK
+
+        // A score high enough to speak for itself, on text too short for the
+        // ordinary rules. Only the shortness veto is waived: a URL, a path, an
+        // identifier or a recently undone fix still blocks, because those say
+        // the text is not prose at all rather than that it is merely brief.
+        if policy == .normal,
+           let confident = thresholds.confidentScore,
+           alternate.combined >= confident,
+           gap >= Thresholds.confidentMinGap,
+           region.letterCount >= Thresholds.confidentMinLetters,
+           guards.vetoesBesidesShortness.isEmpty
+        {
+            return .autoApply(fix)
+        }
 
         if autoAllowed {
             let scoresOK =
