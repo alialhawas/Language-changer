@@ -64,6 +64,10 @@ final class TypingPipeline {
     let layoutEngine = LayoutEngine()
 
     private let session: TypingSession
+    /// This user's own vocabulary. One instance, shared by both language
+    /// models, so a word learned in English is not credited to Arabic.
+    let lexicon = UserLexicon(url: UserLexicon.defaultURL())
+
     private let fixEngine: FixApplying
     private let settings: SettingsStore
     private let frontmost: FrontmostAppTracker
@@ -472,6 +476,23 @@ final class TypingPipeline {
 
     // MARK: - Evaluation
 
+    /// Counts the words of a run the detector examined and left alone.
+    ///
+    /// "Left alone" is the whole safeguard. It means the detector rendered the
+    /// keys under both layouts, scored them, and concluded the text already
+    /// reads as the language it is in — which is the only moment the app has
+    /// grounds to treat those words as this person's vocabulary rather than as
+    /// something waiting to be corrected. A run that produced a candidate is
+    /// never counted, however it was resolved, so wrong-layout text cannot
+    /// teach itself into the dictionary.
+    private func learnVocabulary(from detection: Detector.Detection, using detector: Detector) {
+        guard case .ignore = detection.decision, detection.region == nil else { return }
+        let model = detector.model(for: detection.typedLanguage)
+        let text = session.currentText
+        guard !text.isEmpty else { return }
+        lexicon.observe(model.vocabulary(in: text), language: detection.typedLanguage)
+    }
+
     private func evaluate() {
         dispatchPrecondition(condition: .onQueue(queue))
 
@@ -510,6 +531,8 @@ final class TypingPipeline {
         }
 
         let detector = Detector(englishLayout: pair.english, arabicLayout: pair.arabic)
+        detector.englishModel.lexicon = lexicon
+        detector.arabicModel.lexicon = lexicon
         let started = Self.now()
         // Step (b), second half: `suggestOnly` is capped inside the decision
         // function, which is the one place that reads `AppPolicy`.
@@ -520,6 +543,8 @@ final class TypingPipeline {
                 recentlyUndone: undoSuppression.texts(bundleID: bundleID, at: now))
         else { return }
         let duration = Self.now() - started
+
+        learnVocabulary(from: detection, using: detector)
 
         let snapshot = DecisionSnapshot(
             detection: detection, policy: policy, bundleID: bundleID, duration: duration,

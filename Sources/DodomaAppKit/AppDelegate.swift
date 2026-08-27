@@ -194,6 +194,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        // What was learned this session outlives it.
+        pipeline?.lexicon.save()
+
         pollTimer?.invalidate()
         pollTimer = nil
         hotkeys.unregister()

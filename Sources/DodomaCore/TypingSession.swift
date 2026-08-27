@@ -124,6 +124,9 @@ public final class TypingSession {
     /// The layout the keys were typed under is read off the script of the text
     /// they produced. That is sound because a buffer never spans an input
     /// source change: switching layouts resets it.
+    /// What the buffer currently puts on screen.
+    public var currentText: String { buffer.currentText }
+
     public func evaluate(
         detector: Detector,
         policy: AppPolicy,
