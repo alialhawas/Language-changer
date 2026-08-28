@@ -16,7 +16,7 @@ enum CLIConfig {
         let s = store.settings
         let permissions = Permissions.current()
 
-        print("Dodoma \(Dodoma.version)")
+        print("Harf \(Dodoma.version)")
         print("")
         print("  running          \(isRunning ? "yes" : "no")")
         print("  accessibility    \(mark(permissions.accessibility))")

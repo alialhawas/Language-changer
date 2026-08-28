@@ -30,7 +30,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let suggestionState = SuggestionState()
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
+        Log.app.info("Harf \(DodomaCore.Dodoma.version, privacy: .public) starting")
 
         preloadLanguageModels()
 

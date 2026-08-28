@@ -215,7 +215,7 @@ final class SettingsWindowController {
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false)
-        window.title = "Dodoma Settings"
+        window.title = "Harf Settings"
         window.isReleasedWhenClosed = false
         // The starfield runs edge to edge, so the title bar has to stop being
         // an opaque strip across the top of it.
@@ -226,7 +226,7 @@ final class SettingsWindowController {
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: SettingsView(model: model))
         window.center()
-        window.setFrameAutosaveName("DodomaSettingsWindow")
+        window.setFrameAutosaveName("HarfSettingsWindow")
         return window
     }
 }
@@ -327,7 +327,7 @@ private struct GeneralTab: View {
             Divider()
 
             Section {
-                Toggle("Pause Dodoma", isOn: paused)
+                Toggle("Pause Harf", isOn: paused)
                 Text("Nothing is buffered, evaluated or rewritten while this is on. "
                     + "The same switch as ⌘⌥P and the menu item.")
                     .font(.caption)
@@ -338,7 +338,7 @@ private struct GeneralTab: View {
             Divider()
 
             Section {
-                Toggle("Start Dodoma at login", isOn: loginItem)
+                Toggle("Start Harf at login", isOn: loginItem)
                     .disabled(model.loginStatus == .unavailable)
                 if !model.loginStatus.explanation.isEmpty {
                     Text(model.loginStatus.explanation)
@@ -441,7 +441,7 @@ private struct ApplicationsTab: View {
             HStack {
                 Button("+ Add app…") { addApp() }
                 Spacer()
-                Text("Removing a row does not switch Dodoma off for that app — it reverts it "
+                Text("Removing a row does not switch Harf off for that app — it reverts it "
                     + "to the default above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -464,7 +464,7 @@ private struct AdvancedTab: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Skip accessibility verification")
                 .font(.headline)
-            Text("Before deleting anything, Dodoma reads the text in front of the caret and "
+            Text("Before deleting anything, Harf reads the text in front of the caret and "
                 + "checks that it is exactly what it recorded you typing. Apps listed here "
                 + "skip that read: the rewrite goes ahead unverified, so a stale buffer "
                 + "deletes whatever happens to be in front of the caret instead. The list "
@@ -585,7 +585,7 @@ private enum AppChooser {
             let alert = NSAlert()
             alert.messageText = "That application has no bundle identifier."
             alert.informativeText =
-                "Dodoma keys its settings on the bundle identifier, so \(url.lastPathComponent) "
+                "Harf keys its settings on the bundle identifier, so \(url.lastPathComponent) "
                 + "cannot be added."
             alert.alertStyle = .warning
             alert.runModal()

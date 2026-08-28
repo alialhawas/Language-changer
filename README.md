@@ -1,8 +1,8 @@
-# Dodoma
+# Harf
 
-Dodoma is a macOS menu-bar utility that fixes text typed with the wrong keyboard
+Harf (حرف, "letter") is a macOS menu-bar utility that fixes text typed with the wrong keyboard
 layout. Typing Arabic while the US layout is active — or English while Arabic
-is — produces mojibake such as `hgsghl` instead of `السلام`. Dodoma watches what
+is — produces mojibake such as `hgsghl` instead of `السلام`. Harf watches what
 you type, notices when a word only makes sense under the other layout, deletes
 what is on screen and types the correction in its place, switching the keyboard
 layout as it goes.
@@ -29,7 +29,7 @@ switcher, and type the whole thing again. A dozen times a day, that is real time
 and real irritation, and it interrupts the thing you were actually thinking
 about.
 
-Dodoma removes the ritual. It notices the moment you pause, works out that what
+Harf removes the ritual. It notices the moment you pause, works out that what
 you typed is only meaningful under the other layout, and rewrites it in place —
 switching the keyboard for you, so the next word you type is already in the
 language you meant. You keep writing. In practice you stop noticing that you
@@ -64,7 +64,7 @@ place. Nothing is uploaded anywhere.
 
 
 
-Dodoma does not read the characters on your screen and guess. It records the
+Harf does not read the characters on your screen and guess. It records the
 **key codes** you pressed — physical positions on the keyboard, which are the
 same whatever layout is active — and after one second of not typing it renders
 that key sequence twice: once through the layout you actually had selected, and
@@ -77,11 +77,17 @@ language: a letter-bigram probability and a dictionary-coverage fraction over a
 list of up to 40,000 words, combined into one number. If the alternate layout scores far
 better than what is on screen, and none of the guards fire — too short, mostly
 digits, an email address or a path, a word that is legitimate in both languages
-— Dodoma acts. How much better "far better" has to be is the **aggressiveness**
+— Harf acts. How much better "far better" has to be is the **aggressiveness**
 setting. A clear win is rewritten silently; a narrower one is offered as a
 suggestion card next to the caret; anything else is ignored and forgotten.
 
 ## Install
+
+The bundle identifier is `com.ali.dodoma` and the signing identity is
+`Dodoma Dev`, both left over from the working name. Neither is user-visible, and
+changing the identifier would make macOS treat Harf as a different application
+and drop its Accessibility and Input Monitoring grants, so they stay.
+
 
 ### From a release
 
@@ -91,15 +97,15 @@ permissions it asks for.
 macOS will refuse to open it the first time. The build is signed, but with a
 self-signed certificate rather than an Apple Developer ID, so Gatekeeper treats
 it exactly as it treats any unnotarised download. To open it anyway: **System
-Settings → Privacy & Security**, scroll to the message naming Dodoma, and press
+Settings → Privacy & Security**, scroll to the message naming Harf, and press
 **Open Anyway**. That is once, not every launch.
 
 ### With Homebrew
 
-Dodoma installs from its own tap:
+Harf installs from its own tap:
 
-    brew tap alialhawas/dodoma
-    brew install --cask --no-quarantine dodoma
+    brew tap alialhawas/harf
+    brew install --cask --no-quarantine harf
 
 `--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
 quarantines casks by default, and a quarantined unnotarised app is refused.
@@ -109,15 +115,15 @@ self-submission, or 75 from someone else, on a repository at least 30 days old �
 a popularity bar, not a quality one. A tap needs none of it and the install
 command is one word longer.
 
-The cask also puts the binary on your PATH as `dodoma`, so every setting is
+The cask also puts the binary on your PATH as `harf`, so every setting is
 readable and writable from a shell:
 
-    dodoma --status                  # permissions, settings, vocabulary
-    dodoma --set confident 70        # fix short words scoring 70% or better
-    dodoma --policy com.apple.Terminal off
-    dodoma --words add kubectl --lang en
-    dodoma --decide "hgsghl ugd;l"   # why it would or would not act
-    dodoma --help
+    harf --status                  # permissions, settings, vocabulary
+    harf --set confident 70        # fix short words scoring 70% or better
+    harf --policy com.apple.Terminal off
+    harf --words add kubectl --lang en
+    harf --decide "hgsghl ugd;l"   # why it would or would not act
+    harf --help
 
 `--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
 quarantines casks by default, and a quarantined unnotarised app is refused.
@@ -154,13 +160,13 @@ changes.
 scripts/make-cert.sh
 ```
 
-Dodoma needs Accessibility and Input Monitoring permissions, and macOS ties
+Harf needs Accessibility and Input Monitoring permissions, and macOS ties
 those grants to the app's code signature. An ad-hoc signature
 (`codesign --sign -`) changes on every rebuild, so macOS treats each build as a
 new app and drops the grants, forcing re-approval after every `make install`.
 
 `scripts/make-cert.sh` creates a self-signed code-signing certificate named
-`Dodoma Dev` in the login keychain and trusts it for code signing. The script
+Dodoma Dev in the login keychain and trusts it for code signing. The script
 asks for the login keychain password (to set the key partition list) and may
 raise a GUI trust prompt. It is idempotent; re-running it when the identity
 exists is a no-op.
@@ -174,7 +180,7 @@ signing and prints a warning.
 make install
 ```
 
-This builds in release, assembles `build/Dodoma.app`, signs it, copies it to
+This builds in release, assembles `build/Harf.app`, signs it, copies it to
 `/Applications` and launches it. Install to `/Applications` rather than running
 from `build/`: start-at-login registers whatever copy is running, and a login
 item pointing into a build directory breaks the first time you `make clean`.
@@ -182,16 +188,16 @@ item pointing into a build directory breaks the first time you `make clean`.
 ### 3. Grant the two permissions
 
 On a machine with neither grant, the first launch opens a short onboarding
-window — the only time Dodoma brings itself to the front. It has a button for
+window — the only time Harf brings itself to the front. It has a button for
 each System Settings pane and ticks each one off as the grant lands. Press
 **Done** when finished; it will not open itself again. Menu → **Onboarding…**
 reopens it.
 
 Without the window, the same thing from the menu-bar item:
 
-1. **Open Accessibility Settings…** → enable Dodoma under
+1. **Open Accessibility Settings…** → enable Harf under
    Privacy & Security → Accessibility.
-2. **Open Input Monitoring Settings…** → enable Dodoma under
+2. **Open Input Monitoring Settings…** → enable Harf under
    Privacy & Security → Input Monitoring.
 
 The menu's status line refreshes every two seconds, so it flips to
@@ -199,7 +205,7 @@ The menu's status line refreshes every two seconds, so it flips to
 
 ### 4. Start at login
 
-Settings → General → **Start Dodoma at login**. This registers the running copy
+Settings → General → **Start Harf at login**. This registers the running copy
 with `SMAppService`. macOS may hold the registration back pending approval, in
 which case the window says so and offers a link to
 System Settings → General → Login Items.
@@ -208,7 +214,7 @@ System Settings → General → Login Items.
 
 ### Automatic fixing
 
-Type normally. One second after you stop, Dodoma evaluates what you typed; if it
+Type normally. One second after you stop, Harf evaluates what you typed; if it
 acts, the text is replaced, the input source switches, the menu-bar item flashes
 `⇄ ع/E` and the menu gains a `Last fix:` line naming what was replaced, what
 replaced it, in which app and when.
@@ -260,17 +266,17 @@ follow. The event tap keeps running so that unpausing needs no permission dance.
 | *Status line* | `Active (capturing)`, `Paused`, `Paused — secure input`, `Needs … permission`, or `Active (capturing) — degraded, click suggestions to accept` |
 | *Last fix* | What was replaced, by what, where and when |
 | **Undo Last Fix** ⌘⌥Z | Enabled only while there is something to undo |
-| **Pause Dodoma** | Same switch as ⌘⌥P |
+| **Pause Harf** | Same switch as ⌘⌥P |
 | **Mode for &lt;app&gt;** | Normal / Suggest only / Off, for the application you were typing in |
 | **Settings…** ⌘, | The window below |
 | **Onboarding…** | Reopens the first-run walkthrough |
 | **Open Accessibility / Input Monitoring Settings…** | The two System Settings panes |
 | **Debug Window** | Live buffer, decisions and key log |
-| **Quit Dodoma** | |
+| **Quit Harf** | |
 
 ⌘⌥Z and ⌘⌥P are registered with Carbon and work from anywhere, whatever you are
-typing in. The chords on **Settings…** and **Quit Dodoma** are ordinary menu key
-equivalents, and Dodoma has no menu bar of its own — it is an accessory app — so
+typing in. The chords on **Settings…** and **Quit Harf** are ordinary menu key
+equivalents, and Harf has no menu bar of its own — it is an accessory app — so
 they only fire while one of its own windows is the key window. Use the menu.
 
 ### Settings
@@ -291,7 +297,7 @@ under Troubleshooting.
 top and is the default every unlisted application follows. Each row can be
 Normal, *Suggest only* or Off; **+ Add app…** adds one from `/Applications`, and
 the **−** button removes the override so the app follows the default again.
-Removing a row is not the same as switching Dodoma off for it.
+Removing a row is not the same as switching Harf off for it.
 
 A fresh install seeds two groups:
 
@@ -316,7 +322,7 @@ defaults read com.ali.dodoma settings
 
 ## Safety
 
-Dodoma presses Delete in applications it does not own. Five independent things
+Harf presses Delete in applications it does not own. Five independent things
 stop it from doing that to text it should not:
 
 - **Secure input.** `IsSecureEventInputEnabled()` is polled every second, re-read
@@ -330,7 +336,7 @@ stop it from doing that to text it should not:
 - **Terminals suggest only.** A wrong-layout rewrite in a shell is a command
   being retyped behind your back, and a mis-sized backspace burst there can send
   a half-deleted command to a running process.
-- **Verify before delete.** Before the first backspace, Dodoma reads the text in
+- **Verify before delete.** Before the first backspace, Harf reads the text in
   front of the caret over the accessibility API and checks that it is exactly
   what it recorded you typing. If it does not match, or the application will not
   report its caret, the automatic fix is downgraded to a suggestion. The
@@ -351,7 +357,7 @@ grant belongs to the previous build. Run `scripts/make-cert.sh`,
 scripts/reset-tcc.sh    # resets the two privacy grants only
 ```
 
-Then remove any stale `Dodoma` entries from both System Settings panes with the
+Then remove any stale `Harf` entries from both System Settings panes with the
 `−` button before re-adding the new build.
 
 **Nothing is being fixed.** Check, in order: the status line says
@@ -361,8 +367,8 @@ not `language models failed to load`; the application is not set to *Off* or
 source are enabled in System Settings → Keyboard.
 
 **"degraded, click suggestions to accept".** macOS disabled the event tap twice
-inside a minute — usually because the system decided Dodoma was too slow to
-respond. Dodoma stops consuming events for the rest of the session as a
+inside a minute — usually because the system decided Harf was too slow to
+respond. Harf stops consuming events for the rest of the session as a
 precaution: ⇥ and Esc go back to being the application's keys, and suggestion
 cards are accepted by clicking them. Quitting and relaunching clears it.
 
@@ -392,13 +398,13 @@ Its contents are sensitive — it is the one place typed text is displayed.
 
 ### Nothing happens in one particular app
 
-Before deleting anything, Dodoma asks the focused app what text sits in front of
+Before deleting anything, Harf asks the focused app what text sits in front of
 the caret, and refuses to rewrite what it cannot confirm. Most apps answer.
 Some do not: an app that draws its editor in a **WKWebView** — a native app with
 a web view inside it, as opposed to an Electron app like Slack — generally
 cannot answer, so fixes there are offered as a suggestion rather than applied.
 
-If you trust a specific app, list it in `axVerifySkip` and Dodoma will act on
+If you trust a specific app, list it in `axVerifySkip` and Harf will act on
 its own record of your keystrokes there instead:
 
     /usr/bin/python3 - <<'EOF'
@@ -410,7 +416,7 @@ its own record of your keystrokes there instead:
     open("/tmp/dodoma.plist","wb").write(plistlib.dumps(d))
     EOF
     defaults import com.ali.dodoma /tmp/dodoma.plist
-    pkill -x Dodoma; open /Applications/Dodoma.app
+    pkill -x Harf; open /Applications/Harf.app
 
 The undo hotkey is the safety net for those apps, since the screen is no longer
 being checked before the delete.
@@ -429,10 +435,10 @@ is worth a run before trusting a build.
 The executable also runs headless, with no permissions required:
 
 ```
-swift run Dodoma --render "HC MV; HKH HSMDIH HGDML"
-swift run Dodoma --score  "please send me the report"
-swift run Dodoma --decide "HC MV; HKH HSMDIH HGDML" [--lang en|ar] [--aggressiveness balanced]
-swift run Dodoma --eval   Tests/DodomaCoreTests/Fixtures/corpus.tsv
+swift run Harf --render "HC MV; HKH HSMDIH HGDML"
+swift run Harf --score  "please send me the report"
+swift run Harf --decide "HC MV; HKH HSMDIH HGDML" [--lang en|ar] [--aggressiveness balanced]
+swift run Harf --eval   Tests/DodomaCoreTests/Fixtures/corpus.tsv
 ```
 
 - `--render` maps the Latin text to US/ANSI key codes and prints what those key
@@ -462,7 +468,7 @@ on the machine.
 
 ```
 make build      # swift build -c release
-make bundle     # assemble build/Dodoma.app
+make bundle     # assemble build/Harf.app
 make sign       # sign the bundle
 make install    # build + bundle + sign, install to /Applications, launch
 make run        # build + bundle + sign, launch from build/ without installing
@@ -476,7 +482,7 @@ make clean      # remove .build and build
 
 The package is three targets: `DodomaCore` (the layout engine, the language
 models, the decision function and the undo bookkeeping — all pure), `DodomaAppKit`
-(the event tap, the injector, the windows and the menu) and a `Dodoma`
+(the event tap, the injector, the windows and the menu) and a `Harf`
 executable that is nothing but the entry point, so that the app-side state
 machines can be driven from a test target.
 
@@ -493,11 +499,11 @@ committed. See `Sources/DodomaCore/Resources/LICENSES.md` for attribution.
 ## Removal
 
 ```
-scripts/uninstall.sh   # quit, delete /Applications/Dodoma.app, reset grants
+scripts/uninstall.sh   # quit, delete /Applications/Harf.app, reset grants
 scripts/reset-tcc.sh   # reset the two privacy grants only
 ```
 
-`uninstall.sh` deliberately leaves the `Dodoma Dev` certificate, its private key
+`uninstall.sh` deliberately leaves the Dodoma Dev certificate, its private key
 and its trust setting in the login keychain, so that reinstalling does not
 require another `make-cert.sh` run. To remove those too:
 

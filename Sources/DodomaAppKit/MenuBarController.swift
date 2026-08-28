@@ -99,7 +99,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             keyEquivalent: Self.undoKeyEquivalent)
         undoItem.keyEquivalentModifierMask = Self.undoModifiers
         undoItem.isEnabled = false
-        pauseItem = NSMenuItem(title: "Pause Dodoma", action: nil, keyEquivalent: "")
+        pauseItem = NSMenuItem(title: "Pause Harf", action: nil, keyEquivalent: "")
         modeItem = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
 
         idleImage = NSImage(
@@ -277,7 +277,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Dodoma",
+        let quitItem = NSMenuItem(title: "Quit Harf",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
         quitItem.target = self

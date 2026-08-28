@@ -148,7 +148,7 @@ public final class UserLexicon: @unchecked Sendable {
     public static func defaultURL() -> URL? {
         FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Dodoma", isDirectory: true)
+            .appendingPathComponent("Harf", isDirectory: true)
             .appendingPathComponent("lexicon.json")
     }
 }

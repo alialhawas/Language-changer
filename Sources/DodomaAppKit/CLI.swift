@@ -24,7 +24,7 @@ public enum CLI {
     static func sharedLexicon() -> UserLexicon { UserLexicon(url: UserLexicon.defaultURL()) }
 
     static let helpText = """
-        dodoma — fixes text typed with the wrong keyboard layout
+        harf — fixes text typed with the wrong keyboard layout
 
         Configuration
           --status                     permissions, settings and vocabulary at a glance
@@ -43,10 +43,10 @@ public enum CLI {
           --eval FILE.tsv              run a labelled corpus
 
         Examples
-          dodoma --set confident 70          fix short words scoring 70% or better
-          dodoma --policy com.apple.Terminal off
-          dodoma --words add kubectl --lang en
-          dodoma --decide "hgsghl ugd;l"
+          harf --set confident 70          fix short words scoring 70% or better
+          harf --policy com.apple.Terminal off
+          harf --words add kubectl --lang en
+          harf --decide "hgsghl ugd;l"
         """
 
     /// Layouts snapshotted into the test fixture. Tests render through these

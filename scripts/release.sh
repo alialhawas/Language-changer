@@ -8,8 +8,8 @@ set -euo pipefail
 
 REPO="${REPO:-alialhawas/Language-changer}"
 TAP_REPO="${TAP_REPO:-}"          # e.g. alialhawas/homebrew-harf
-APP_NAME="${APP_NAME:-Dodoma}"
-CASK_TOKEN="${CASK_TOKEN:-dodoma}"
+APP_NAME="${APP_NAME:-Harf}"
+CASK_TOKEN="${CASK_TOKEN:-harf}"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
 TAG="v${VERSION}"
 DMG="build/${APP_NAME}-${VERSION}.dmg"

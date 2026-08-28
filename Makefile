@@ -1,4 +1,4 @@
-APP_NAME := Dodoma
+APP_NAME := Harf
 BUNDLE_ID := com.ali.dodoma
 APP_BUNDLE := build/$(APP_NAME).app
 CONTENTS := $(APP_BUNDLE)/Contents
@@ -7,7 +7,7 @@ SIGN_IDENTITY := Dodoma Dev
 FIXTURES := Tests/DodomaCoreTests/Fixtures/layout-tables.json
 CORPUS := Tests/DodomaCoreTests/Fixtures/corpus.tsv
 # SwiftPM resource bundle for the DodomaCore target: <package>_<target>.bundle
-RESOURCE_BUNDLE := Dodoma_DodomaCore.bundle
+RESOURCE_BUNDLE := Harf_DodomaCore.bundle
 
 .PHONY: dmg build bundle sign install run test fixtures logs ngrams eval clean
 
@@ -41,7 +41,7 @@ sign: bundle
 		echo "Ad-hoc signatures change on every rebuild, so macOS treats"; \
 		echo "each build as a different app and DROPS the Accessibility"; \
 		echo "and Input Monitoring grants. You will have to re-approve"; \
-		echo "Dodoma after every build."; \
+		echo "Harf after every build."; \
 		echo "Fix this once by running: scripts/make-cert.sh"; \
 		echo "############################################################"; \
 		codesign --force --deep --sign - $(APP_BUNDLE); \

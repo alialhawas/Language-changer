@@ -7,7 +7,7 @@
 # problem, and this script cannot solve it — see the release notes in README.
 set -euo pipefail
 
-APP_NAME="${APP_NAME:-Dodoma}"
+APP_NAME="${APP_NAME:-Harf}"
 VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)}"
 APP="build/${APP_NAME}.app"
 DMG="build/${APP_NAME}-${VERSION}.dmg"
