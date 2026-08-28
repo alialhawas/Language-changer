@@ -11,7 +11,43 @@ public enum CLI {
         case score(text: String?)
         case decide(text: String?, language: String?, aggressiveness: String?, confident: String?)
         case eval(path: String?, aggressiveness: String?, confident: String?)
+        case status
+        case config
+        case set(key: String?, value: String?)
+        case policy(bundleID: String?, mode: String?)
+        case words(action: String?, word: String?, language: String?)
+        case help
     }
+
+    /// The lexicon the running app reads and writes, so a word added from a
+    /// shell is the same word the app looks up.
+    static func sharedLexicon() -> UserLexicon { UserLexicon(url: UserLexicon.defaultURL()) }
+
+    static let helpText = """
+        dodoma — fixes text typed with the wrong keyboard layout
+
+        Configuration
+          --status                     permissions, settings and vocabulary at a glance
+          --config                     the settings as JSON
+          --set KEY VALUE              paused | sensitivity | confident | debugLogging
+                                       | defaultPolicy  (VALUE 'off' clears confident)
+          --policy [BUNDLE_ID [MODE]]  list, read, or set normal | suggestOnly | off
+          --words [list|add|remove] [WORD] --lang en|ar
+
+        Inspecting a decision
+          --render TEXT                what those keys produce under each layout
+          --score TEXT                 how the text reads in each language
+          --decide TEXT                the verdict, with every gate it passed
+              [--lang en|ar] [--aggressiveness conservative|balanced|eager]
+              [--confident 0.9]
+          --eval FILE.tsv              run a labelled corpus
+
+        Examples
+          dodoma --set confident 70          fix short words scoring 70% or better
+          dodoma --policy com.apple.Terminal off
+          dodoma --words add kubectl --lang en
+          dodoma --decide "hgsghl ugd;l"
+        """
 
     /// Layouts snapshotted into the test fixture. Tests render through these
     /// rather than through whatever is enabled on the running machine.
@@ -46,6 +82,23 @@ public enum CLI {
             case "--eval":
                 return .eval(path: next, aggressiveness: value(after: "--aggressiveness"),
                              confident: value(after: "--confident"))
+            case "--status":
+                return .status
+            case "--config":
+                return .config
+            case "--set":
+                return .set(key: next, value: arguments.indices.contains(index + 2)
+                            ? arguments[index + 2] : nil)
+            case "--policy":
+                return .policy(bundleID: next, mode: arguments.indices.contains(index + 2)
+                               ? arguments[index + 2] : nil)
+            case "--words":
+                return .words(
+                    action: next, word: arguments.indices.contains(index + 2)
+                        ? arguments[index + 2] : nil,
+                    language: value(after: "--lang"))
+            case "--help", "-h":
+                return .help
             default:
                 continue
             }
@@ -81,6 +134,19 @@ public enum CLI {
                 return fail("--eval: expected a corpus path", code: 2)
             }
             return eval(path, aggressiveness: aggressiveness, confident: confident)
+        case .status:
+            return CLIConfig.status(SettingsStore(), lexicon: sharedLexicon())
+        case .config:
+            return CLIConfig.dump(SettingsStore())
+        case .set(let key, let value):
+            return CLIConfig.set(key, value, store: SettingsStore())
+        case .policy(let bundleID, let mode):
+            return CLIConfig.policy(bundleID, mode, store: SettingsStore())
+        case .words(let action, let word, let language):
+            return CLIConfig.words(action, word, language: language, lexicon: sharedLexicon())
+        case .help:
+            print(helpText)
+            return 0
         }
     }
 
@@ -320,7 +386,7 @@ public enum CLI {
         FileHandle.standardError.write(Data("\(message)\n".utf8))
     }
 
-    private static func fail(_ message: String, code: Int32) -> Int32 {
+    static func fail(_ message: String, code: Int32) -> Int32 {
         warn(message)
         return code
     }

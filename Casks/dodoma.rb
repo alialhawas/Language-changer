@@ -10,6 +10,9 @@ cask "dodoma" do
   depends_on macos: ">= :sonoma"
 
   app "Dodoma.app"
+  # The same binary serves the menu-bar app and the command line, so `dodoma
+  # --status` works without shipping a second executable.
+  binary "#{appdir}/Dodoma.app/Contents/MacOS/Dodoma", target: "dodoma"
 
   # The build is self-signed, so Gatekeeper refuses it like any unnotarised
   # download. Homebrew quarantines casks by default, which means the same

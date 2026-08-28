@@ -96,7 +96,28 @@ Settings → Privacy & Security**, scroll to the message naming Dodoma, and pres
 
 ### With Homebrew
 
-    brew install --cask --no-quarantine alialhawas/dodoma/dodoma
+Dodoma installs from its own tap:
+
+    brew tap alialhawas/dodoma
+    brew install --cask --no-quarantine dodoma
+
+`--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
+quarantines casks by default, and a quarantined unnotarised app is refused.
+
+It is not in `homebrew/cask` itself. That requires 225 stars for a
+self-submission, or 75 from someone else, on a repository at least 30 days old —
+a popularity bar, not a quality one. A tap needs none of it and the install
+command is one word longer.
+
+The cask also puts the binary on your PATH as `dodoma`, so every setting is
+readable and writable from a shell:
+
+    dodoma --status                  # permissions, settings, vocabulary
+    dodoma --set confident 70        # fix short words scoring 70% or better
+    dodoma --policy com.apple.Terminal off
+    dodoma --words add kubectl --lang en
+    dodoma --decide "hgsghl ugd;l"   # why it would or would not act
+    dodoma --help
 
 `--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
 quarantines casks by default, and a quarantined unnotarised app is refused.
