@@ -7,7 +7,7 @@ cask "harf" do
   desc "Fixes text typed with the wrong keyboard layout, Arabic and English"
   homepage "https://github.com/alialhawas/Language-changer"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Harf.app"
   # The same binary serves the menu-bar app and the command line, so `harf
