@@ -129,6 +129,9 @@ readable and writable from a shell:
 
     harf --status                  # permissions, settings, vocabulary
     harf --set confident 70        # fix short words scoring 70% or better
+    harf --set buffer 60           # hold fewer keystrokes in memory
+    harf --set idle 5              # drop them after 5s of silence
+    harf --set learn off           # stop learning words, erase the file
     harf --policy com.apple.Terminal off
     harf --words add kubectl --lang en
     harf --decide "hgsghl ugd;l"   # why it would or would not act
@@ -321,10 +324,66 @@ your decision, so the seed returns on the next launch.
 accessibility read is skipped, the 30-second undo window (read-only) and the two
 shortcuts (read-only; rebinding is not supported).
 
+### Memory: how much is held, and for how long
+
+Two numbers decide how much of your typing exists at any moment. They are the
+tightest privacy control the app has, because everything else — the guards, the
+policies, the secure-field checks — governs what Harf *does* with your
+keystrokes, while these govern how many it has.
+
+| | Default | Range | What it means |
+| --- | --- | --- | --- |
+| `buffer` | 200 keystrokes | 20–500 | How many keys are held at once. Older ones fall off the end |
+| `idle` | 10 seconds | 2–120 | Silence after which the buffer is dropped entirely |
+
+```
+harf --set buffer 60      # hold about a short sentence
+harf --set idle 5         # forget it after five seconds of not typing
+```
+
+Lowering either takes effect on what is **already** held, not only on what
+arrives next. The trade is reach: a smaller buffer cannot correct a mistake that
+began earlier in the line, because those keystrokes are gone. Nothing here is
+ever written to disk — the buffer lives in memory and dies with the process, or
+sooner, at any of the thirteen resets.
+
+### Vocabulary: what `learn` does
+
+The bundled word lists come from film subtitles. That is the right corpus for
+prose and the wrong one for the way anyone actually works: `pr`, `dto`, `async`
+and `endpoint` all score zero against them. Every unrecognised word drags a
+reading down, so the words you type most are the ones Harf is least sure about.
+
+So it watches what you write, and after **ten sightings** a word counts as real.
+
+```
+harf --words list                  # what has been learned, and how often
+harf --words add kubectl --lang en # skip the counting
+harf --words remove kubectl --lang en
+harf --words clear                 # erase everything, on disk as well
+harf --set learn off               # stop learning and delete the file
+```
+
+What can be learned is deliberately narrow:
+
+- **Only from text Harf examined and left alone.** It rendered your keys under
+  both layouts, scored them, and concluded the text already reads as the
+  language it is in. A run that produced a candidate teaches nothing, however it
+  was resolved — so wrong-layout text cannot promote itself into the dictionary.
+- **Nothing under three letters**, which is noise rather than vocabulary.
+- **Each language separately.** A word learned while writing English is never
+  credited to Arabic.
+
+This is the only thing Harf writes to disk:
+`~/Library/Application Support/Harf/lexicon.json`, owner-readable only (0600).
+It holds words you typed and how often, so it is worth knowing it exists: a
+project codename or a client's name typed often enough will end up in it.
+`--set learn off` stops the whole mechanism and erases the file.
+
 Preferences live in one JSON blob under the `settings` key in `com.ali.dodoma`:
 
 ```
-defaults read com.ali.dodoma settings
+defaults read com.ali.dodoma settings   # or: harf --config
 ```
 
 ## What it holds, and where
