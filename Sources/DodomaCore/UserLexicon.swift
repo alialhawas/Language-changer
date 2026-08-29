@@ -27,6 +27,8 @@ public final class UserLexicon: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private let ioQueue = DispatchQueue(label: "com.ali.dodoma.lexicon", qos: .utility)
+    private var lastSaved: Date?
     private var stores: [String: Store] = [:]
     private var dirty = false
     private let url: URL?
@@ -64,6 +66,20 @@ public final class UserLexicon: @unchecked Sendable {
         guard let store = stores[language.rawValue] else { return [] }
         return store.counts
             .filter { $0.value >= Self.promotionThreshold }
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .map { (word: $0.key, count: $0.value) }
+    }
+
+    /// Words seen but not yet promoted, most seen first.
+    ///
+    /// Ten sightings is a long wait to watch in silence; showing the count on
+    /// the way there is the difference between a rule someone can verify and
+    /// one they have to trust.
+    public func pending(_ language: Language) -> [(word: String, count: Int)] {
+        lock.lock(); defer { lock.unlock() }
+        guard let store = stores[language.rawValue] else { return [] }
+        return store.counts
+            .filter { $0.value < Self.promotionThreshold }
             .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             .map { (word: $0.key, count: $0.value) }
     }
@@ -129,6 +145,21 @@ public final class UserLexicon: @unchecked Sendable {
     }
 
     // MARK: - Persistence
+
+    /// Writes at most once per `interval`, off the calling queue.
+    ///
+    /// Saving only at quit meant the file — which is what `harf --words` reads
+    /// — stayed empty for as long as the app kept running, so nobody could see
+    /// what was being learned about them until they closed it. That is the
+    /// wrong way round for a privacy surface.
+    public func saveIfDue(interval: TimeInterval = 20) {
+        lock.lock()
+        let due = dirty && (lastSaved.map { Date().timeIntervalSince($0) >= interval } ?? true)
+        if due { lastSaved = Date() }
+        lock.unlock()
+        guard due else { return }
+        ioQueue.async { [weak self] in self?.save() }
+    }
 
     @discardableResult
     public func save() -> Bool {

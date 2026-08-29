@@ -357,12 +357,24 @@ reading down, so the words you type most are the ones Harf is least sure about.
 So it watches what you write, and after **ten sightings** a word counts as real.
 
 ```
-harf --words list                  # what has been learned, and how often
+harf --words list                  # what is known, and what is on the way
 harf --words add kubectl --lang en # skip the counting
 harf --words remove kubectl --lang en
 harf --words clear                 # erase everything, on disk as well
 harf --set learn off               # stop learning and delete the file
 ```
+
+`--words list` shows three things: words that crossed the line, words you added
+by hand, and words part-way there with their count, so the rule can be watched
+rather than taken on faith.
+
+    en  1 known, 1 added by hand, 1 on the way
+        backoffice   added
+        kubectl      seen 11×
+        endpoint     4/10
+
+The file is rewritten at most every twenty seconds while the app runs, so what
+you read is current without having to quit it.
 
 What can be learned is deliberately narrow:
 

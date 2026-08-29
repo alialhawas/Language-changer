@@ -148,10 +148,20 @@ enum CLIConfig {
             for lang in language.map { [$0] } ?? [.english, .arabic] {
                 let learned = lexicon.learned(lang)
                 let manual = lexicon.manualWords(lang)
-                print("\(lang.rawValue)  \(learned.count) learned, \(manual.count) added")
-                for word in manual { print("    \(word)   (added)") }
-                for entry in learned.prefix(40) { print("    \(entry.word)   ×\(entry.count)") }
-                if learned.count > 40 { print("    … and \(learned.count - 40) more") }
+                let pending = lexicon.pending(lang)
+                print(
+                    "\(lang.rawValue)  \(learned.count) known, \(manual.count) added by hand, "
+                        + "\(pending.count) on the way")
+                for word in manual { print("    \(word)   added") }
+                for entry in learned.prefix(30) { print("    \(entry.word)   seen \(entry.count)×") }
+                if learned.count > 30 { print("    … and \(learned.count - 30) more") }
+                for entry in pending.prefix(15) {
+                    print("    \(entry.word)   \(entry.count)/\(UserLexicon.promotionThreshold)")
+                }
+                if pending.count > 15 { print("    … and \(pending.count - 15) more on the way") }
+                if learned.isEmpty && manual.isEmpty && pending.isEmpty {
+                    print("    nothing yet")
+                }
             }
             return 0
         case "clear":

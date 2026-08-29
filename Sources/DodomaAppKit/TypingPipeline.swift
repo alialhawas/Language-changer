@@ -499,6 +499,7 @@ final class TypingPipeline {
         let text = session.currentText
         guard !text.isEmpty else { return }
         lexicon.observe(model.vocabulary(in: text), language: detection.typedLanguage)
+        lexicon.saveIfDue()
     }
 
     private func evaluate() {
