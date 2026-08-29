@@ -498,7 +498,17 @@ final class TypingPipeline {
         let model = detector.model(for: detection.typedLanguage)
         let text = session.currentText
         guard !text.isEmpty else { return }
-        lexicon.observe(model.vocabulary(in: text), language: detection.typedLanguage)
+        // Only words the shipped list does not already have.
+        //
+        // Counting everything meant the file filled with "the", "and" and
+        // "create" — words that were already known, so learning them changed
+        // no score, while the counts amounted to a frequency profile of
+        // ordinary writing sitting on disk. The gap this exists to close is
+        // the vocabulary the subtitle corpus lacks, so that is all it records:
+        // what is missing, and how often it is used.
+        let unknown = model.vocabulary(in: text).filter { !model.isKnownWord($0) }
+        guard !unknown.isEmpty else { return }
+        lexicon.observe(unknown, language: detection.typedLanguage)
         lexicon.saveIfDue()
     }
 

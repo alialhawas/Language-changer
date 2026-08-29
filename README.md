@@ -354,7 +354,11 @@ prose and the wrong one for the way anyone actually works: `pr`, `dto`, `async`
 and `endpoint` all score zero against them. Every unrecognised word drags a
 reading down, so the words you type most are the ones Harf is least sure about.
 
-So it watches what you write, and after **ten sightings** a word counts as real.
+So it watches what you write — but only for words the shipped list **does not
+already have**. Ordinary words are never recorded: learning `the` or `create`
+would change no score, and the counts would amount to a frequency profile of
+your writing sitting on disk. What accumulates is the gap between the two
+lists, and after **ten sightings** a word in that gap counts as real.
 
 ```
 harf --words list                  # what is known, and what is on the way

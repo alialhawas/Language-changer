@@ -93,9 +93,12 @@ public final class UserLexicon: @unchecked Sendable {
 
     /// Records a sighting of each token.
     ///
-    /// Called only for text the detector examined and left alone, which is the
-    /// one moment the app has grounds to believe the words are real: it looked
-    /// at the run, in this language, and found nothing to correct.
+    /// Callers pass only words the shipped list does not already contain, so
+    /// what accumulates here is the gap between the two — never a record of
+    /// ordinary writing. And only from text the detector examined and left
+    /// alone, which is the one moment the app has grounds to believe the words
+    /// are real: it looked at the run, in this language, and found nothing to
+    /// correct.
     public func observe(_ tokens: [String], language: Language) {
         let worth = tokens.filter { $0.count >= Self.minimumLength }
         guard !worth.isEmpty else { return }

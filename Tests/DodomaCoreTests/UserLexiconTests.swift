@@ -84,3 +84,21 @@ final class UserLexiconTests: XCTestCase {
         XCTAssertGreaterThan(model.dictCoverage("the endpoint returned"), before)
     }
 }
+
+extension UserLexiconTests {
+    /// The personal list holds what the shipped one lacks, and nothing else.
+    ///
+    /// Recording every word would have put a frequency profile of ordinary
+    /// writing on disk while changing no score, since those words were already
+    /// known.
+    func testOnlyWordsMissingFromTheShippedListAreWorthRecording() throws {
+        let model = try LanguageModel.shared(.english)
+        let sentence = "we should create the endpoint and merge the pr"
+        let unknown = model.vocabulary(in: sentence).filter { !model.isKnownWord($0) }
+
+        XCTAssertTrue(unknown.contains("endpoint"), "jargon the subtitle corpus lacks")
+        for ordinary in ["should", "create", "the", "and", "merge"] {
+            XCTAssertFalse(unknown.contains(ordinary), "\(ordinary) is already known")
+        }
+    }
+}
