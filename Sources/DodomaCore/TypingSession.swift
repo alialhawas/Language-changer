@@ -127,6 +127,13 @@ public final class TypingSession {
     /// What the buffer currently puts on screen.
     public var currentText: String { buffer.currentText }
 
+    /// Seconds of silence after which the buffer is dropped. Settable so the
+    /// user can shorten how long anything is held.
+    public var idleTimeout: TimeInterval = BufferResetPolicy.idleTimeout
+
+    /// Passes a new limit to the buffer, trimming what is already held.
+    public func setBufferCapacity(_ keys: Int) { buffer.setCapacity(keys) }
+
     public func evaluate(
         detector: Detector,
         policy: AppPolicy,
@@ -237,7 +244,8 @@ public final class TypingSession {
             // would refresh `lastKeyTimestamp` and the stale prefix would never
             // be dropped.
             if let last = lastKeyTimestamp,
-               BufferResetPolicy.isIdle(lastKeyTimestamp: last, now: key.timestamp),
+               BufferResetPolicy.isIdle(
+                   lastKeyTimestamp: last, now: key.timestamp, timeout: idleTimeout),
                !buffer.isEmpty {
                 clear(reason: .idleTimeout)
                 performedReset = .idleTimeout

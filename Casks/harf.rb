@@ -14,23 +14,27 @@ cask "harf" do
   # --status` works without shipping a second executable.
   binary "#{appdir}/Harf.app/Contents/MacOS/Harf", target: "harf"
 
-  # The build is self-signed, so Gatekeeper refuses it like any unnotarised
-  # download. Homebrew quarantines casks by default, which means the same
-  # refusal; installing with --no-quarantine skips it, and the caveats below
-  # say so rather than leaving the user at a dead end.
+  # Deliberately does not tell anyone to pass --no-quarantine. That flag
+  # switches Gatekeeper off for the install, and this app asks for the two most
+  # powerful grants macOS has; teaching the habit is worse than the one-time
+  # click below, which leaves Gatekeeper on and applies to this app alone.
   caveats <<~CAVEATS
-    Harf is not notarised by Apple, so macOS will refuse to open it unless
-    you install it without quarantine:
+    Harf is not notarised by Apple yet, so macOS will refuse to open it the
+    first time. To allow it, once:
 
-      brew install --cask --no-quarantine harf
+      System Settings > Privacy & Security > scroll to the message naming
+      Harf > Open Anyway
 
-    It then needs two permissions before it can do anything, both under
-    System Settings > Privacy & Security:
+    That keeps Gatekeeper on for everything else. Do not install this with
+    --no-quarantine unless you understand what you are switching off.
+
+    Harf then needs two permissions, both under Privacy & Security:
 
       Accessibility      — to replace the text
       Input Monitoring   — to see the keys you press
 
-    Neither is optional; the app cannot work with only one.
+    Neither is optional; the app cannot work with only one. It is open
+    source: read what it does before you grant them.
   CAVEATS
 
   zap trash: [

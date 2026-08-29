@@ -274,6 +274,13 @@ final class TypingPipeline {
                 self.paused = updated.paused
             }
 
+            // How much is held, and for how long, are privacy controls: apply
+            // them before anything else, and to the buffer as it already
+            // stands rather than only to what arrives next.
+            self.session.setBufferCapacity(updated.bufferCapacity)
+            self.session.idleTimeout = updated.idleTimeout
+            if !updated.learnVocabulary { self.lexicon.clear() }
+
             let policy = updated.policy(for: self.session.currentFrontmostBundleID)
             if policy == .off, self.frontmostPolicy != .off {
                 self.suspend(reason: .manual, describedAs: "this app was set to Off")
@@ -486,6 +493,7 @@ final class TypingPipeline {
     /// never counted, however it was resolved, so wrong-layout text cannot
     /// teach itself into the dictionary.
     private func learnVocabulary(from detection: Detector.Detection, using detector: Detector) {
+        guard settings.learnVocabulary else { return }
         guard case .ignore = detection.decision, detection.region == nil else { return }
         let model = detector.model(for: detection.typedLanguage)
         let text = session.currentText
@@ -569,7 +577,7 @@ final class TypingPipeline {
         // The one interpolation in the project that is deliberately public:
         // redacting it would make the opt-in flag pointless.
         Log.decision.info(
-            "\(snapshot.verdict, privacy: .public) region=\(snapshot.regionText, privacy: .public) cur=\(snapshot.currentScore, format: .fixed(precision: 2), privacy: .public) alt=\(snapshot.alternateScore, format: .fixed(precision: 2), privacy: .public) guards=\(snapshot.guards, privacy: .public) reason=\(snapshot.reason, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
+            "\(snapshot.verdict, privacy: .public) region=\(snapshot.regionText, privacy: .private) cur=\(snapshot.currentScore, format: .fixed(precision: 2), privacy: .public) alt=\(snapshot.alternateScore, format: .fixed(precision: 2), privacy: .public) guards=\(snapshot.guards, privacy: .public) reason=\(snapshot.reason, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
         )
     }
 

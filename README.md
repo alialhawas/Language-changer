@@ -105,10 +105,19 @@ Settings → Privacy & Security**, scroll to the message naming Harf, and press
 Harf installs from its own tap:
 
     brew tap alialhawas/harf
-    brew install --cask --no-quarantine harf
+    brew trust alialhawas/harf
+    brew install harf
 
-`--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
-quarantines casks by default, and a quarantined unnotarised app is refused.
+Homebrew 6 requires the trust step for any tap outside its own index; without it
+the cask is refused before it is read. After that the short name works.
+
+macOS will still refuse the app the first time, because it is not notarised.
+Allow it once under **System Settings → Privacy & Security → Open Anyway**.
+
+`--no-quarantine` would skip that prompt, and this README will not recommend it.
+The flag turns Gatekeeper off for the install, and Harf asks for the two most
+powerful permissions macOS grants — that is precisely the combination where the
+check is worth keeping.
 
 It is not in `homebrew/cask` itself. That requires 225 stars for a
 self-submission, or 75 from someone else, on a repository at least 30 days old —
@@ -125,8 +134,6 @@ readable and writable from a shell:
     harf --decide "hgsghl ugd;l"   # why it would or would not act
     harf --help
 
-`--no-quarantine` is doing the same job as the Open Anyway button: Homebrew
-quarantines casks by default, and a quarantined unnotarised app is refused.
 
 ### Building it yourself
 
@@ -150,7 +157,7 @@ code change:
 | Notarisation | `xcrun notarytool submit`, then `xcrun stapler staple` |
 
 With those, the disk image opens with a double-click and no warning, and the
-Homebrew cask no longer needs `--no-quarantine`. Nothing else about the app
+Homebrew cask installs without a prompt. Nothing else about the app
 changes.
 
 
@@ -319,6 +326,23 @@ Preferences live in one JSON blob under the `settings` key in `com.ali.dodoma`:
 ```
 defaults read com.ali.dodoma settings
 ```
+
+## What it holds, and where
+
+Harf sees every keystroke you type. That is what it is for, and it is also the
+reason to be exact about what it keeps.
+
+| | |
+|---|---|
+| Keystrokes | in memory only, `--set buffer N` keys at a time, dropped after `--set idle N` seconds of silence |
+| Password fields | never captured; detecting one purges the keystroke history immediately |
+| Learned words | the only thing written to disk. `~/Library/Application Support/Harf/lexicon.json`, owner-readable (0600). `--set learn off` stops it and erases the file; `--words clear` erases it on demand |
+| Everything else | nothing. No network code exists in the app |
+
+`--set debugLogging on` records the text of detected regions to the system log
+for troubleshooting. It is off by default, and the text is written as private,
+so it is redacted unless you deliberately widen the log. Turn it off when you
+are done.
 
 ## Safety
 

@@ -21,15 +21,33 @@ SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
 echo "    $DMG"
 echo "    sha256 $SHA"
 
+# Notarisation, when a Developer ID is available. Without it the build is
+# self-signed: it opens on the machine that made it and is refused everywhere
+# else, and Apple has no way to revoke it if a build is ever compromised. With
+# NOTARY_PROFILE set, these three lines are the whole difference.
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+  echo "==> Notarising (profile $NOTARY_PROFILE)"
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"   # stapling rewrites the file
+  echo "    stapled; sha256 now $SHA"
+else
+  echo "==> Not notarised (set NOTARY_PROFILE to change that)"
+fi
+
 echo "==> Publishing $TAG to $REPO"
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   gh release upload "$TAG" "$DMG" --repo "$REPO" --clobber
 else
   gh release create "$TAG" "$DMG" --repo "$REPO" \
     --title "${APP_NAME} ${VERSION}" \
-    --notes "Not notarised. macOS refuses unsigned downloads, so open it once from
-System Settings > Privacy & Security, or install with
-\`brew install --cask --no-quarantine ${CASK_TOKEN}\`."
+    --notes "sha256  ${SHA}
+
+Not notarised by Apple. macOS will refuse it the first time; allow it once under
+System Settings > Privacy & Security > Open Anyway, which leaves Gatekeeper on.
+
+Verify the download before you trust it:
+    shasum -a 256 ${APP_NAME}-${VERSION}.dmg"
 fi
 
 echo "==> Refreshing the cask"

@@ -25,6 +25,8 @@ enum CLIConfig {
         print("  paused           \(mark(s.paused))")
         print("  sensitivity      \(s.aggressiveness.rawValue)")
         print("  confident score  \(s.confidentScore.map { pct($0) } ?? "off")")
+        print("  buffer           \(s.bufferCapacity) keystrokes, dropped after \(Int(s.idleTimeout))s idle")
+        print("  learning words   \(mark(s.learnVocabulary))")
         print("  debug logging    \(mark(s.debugLogging))")
         print("  default policy   \(s.defaultPolicy.rawValue)")
         print("")
@@ -77,6 +79,19 @@ enum CLIConfig {
                 return CLI.fail(
                     "--set confident: expected a score such as 0.9 or 90, or 'off'", code: 2)
             }
+        case "buffer", "bufferCapacity":
+            guard let keys = Int(raw), keys > 0 else {
+                return CLI.fail("--set buffer: expected a number of keystrokes", code: 2)
+            }
+            store.setBufferCapacity(keys)
+        case "idle", "idleTimeout":
+            guard let seconds = Double(raw), seconds > 0 else {
+                return CLI.fail("--set idle: expected a number of seconds", code: 2)
+            }
+            store.setIdleTimeout(seconds)
+        case "learn", "learnVocabulary":
+            guard let on = boolean(raw) else { return badBool(key, raw) }
+            store.setLearnVocabulary(on)
         case "defaultPolicy":
             guard let policy = AppPolicy(rawValue: raw) else { return badPolicy(raw) }
             store.setDefaultPolicy(policy)
@@ -139,6 +154,10 @@ enum CLIConfig {
                 if learned.count > 40 { print("    … and \(learned.count - 40) more") }
             }
             return 0
+        case "clear":
+            lexicon.clear()
+            print("cleared every remembered word, on disk as well as in memory")
+            return 0
         case "add", "remove":
             guard let word else { return CLI.fail("--words \(action!): expected a WORD", code: 2) }
             guard let language else {
@@ -154,7 +173,7 @@ enum CLIConfig {
             lexicon.save()
             return 0
         default:
-            return CLI.fail("--words: expected list, add or remove", code: 2)
+            return CLI.fail("--words: expected list, add, remove or clear", code: 2)
         }
     }
 

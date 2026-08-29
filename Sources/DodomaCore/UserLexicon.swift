@@ -139,9 +139,31 @@ public final class UserLexicon: @unchecked Sendable {
         lock.unlock()
 
         guard let data = try? JSONEncoder().encode(snapshot) else { return false }
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        return (try? data.write(to: url, options: .atomic)) != nil
+        let manager = FileManager.default
+        // The directory and the file are owner-only. This holds words the user
+        // typed, which is the one thing this app puts on disk, and the default
+        // 0644 would let every process running as any user on the machine read
+        // it. Set on create and re-applied on write, since an atomic write
+        // replaces the inode and takes the umask with it.
+        try? manager.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        guard (try? data.write(to: url, options: .atomic)) != nil else { return false }
+        try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return true
+    }
+
+    /// Erases everything remembered, on disk as well as in memory.
+    ///
+    /// Turning learning off should not leave the previous answer lying around,
+    /// and somebody who wants this gone wants it gone.
+    public func clear() {
+        lock.lock()
+        stores = [:]
+        dirty = false
+        let path = url
+        lock.unlock()
+        if let path { try? FileManager.default.removeItem(at: path) }
     }
 
     /// Where the file lives when the app is running normally.

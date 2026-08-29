@@ -29,10 +29,10 @@ public enum CLI {
         Configuration
           --status                     permissions, settings and vocabulary at a glance
           --config                     the settings as JSON
-          --set KEY VALUE              paused | sensitivity | confident | debugLogging
-                                       | defaultPolicy  (VALUE 'off' clears confident)
+          --set KEY VALUE              paused | sensitivity | confident | buffer | idle
+                                       | learn | debugLogging | defaultPolicy
+          --words [list|add|remove|clear] [WORD] --lang en|ar
           --policy [BUNDLE_ID [MODE]]  list, read, or set normal | suggestOnly | off
-          --words [list|add|remove] [WORD] --lang en|ar
 
         Inspecting a decision
           --render TEXT                what those keys produce under each layout
@@ -45,6 +45,8 @@ public enum CLI {
         Examples
           harf --set confident 70          fix short words scoring 70% or better
           harf --policy com.apple.Terminal off
+          harf --set buffer 60               hold less of what you type
+          harf --set learn off               stop remembering words, erase the file
           harf --words add kubectl --lang en
           harf --decide "hgsghl ugd;l"
         """
