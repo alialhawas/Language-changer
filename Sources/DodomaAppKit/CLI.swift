@@ -32,7 +32,26 @@ public enum CLI {
           --set KEY VALUE              paused | sensitivity | confident | buffer | idle
                                        | learn | debugLogging | defaultPolicy
           --words [list|add|remove|clear] [WORD] --lang en|ar
-          --policy [BUNDLE_ID [MODE]]  list, read, or set normal | suggestOnly | off
+                                       your own vocabulary, kept in
+                                       ~/Library/Application Support/Harf/lexicon.json
+          --policy [BUNDLE_ID [MODE]]  list, read, or set an app's mode
+
+        Per-app modes
+          normal        replaces silently when one reading wins clearly, and
+                        offers a card when the two are close
+          suggestOnly   never deletes anything by itself; Tab applies the card,
+                        esc dismisses it, and so does carrying on typing
+          off           captures nothing at all in that app
+
+          Every app is normal until changed, including ones installed later.
+          Terminals ship as suggestOnly, password managers as off.
+
+          harf --policy                              list every app
+          harf --policy com.mitchellh.ghostty normal
+          osascript -e 'id of app "Slack"'           find a bundle id
+
+          Or click the menu bar icon with the app you mean in front: the
+          submenu applies to that app alone.
 
         Inspecting a decision
           --render TEXT                what those keys produce under each layout
