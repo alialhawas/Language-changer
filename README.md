@@ -180,18 +180,26 @@ exceptions to do so: Accessibility and Input Monitoring are TCC grants rather
 than entitlements, so there is no entitlements file to get wrong. Only the
 certificate is missing.
 
-Once the Developer Program membership exists:
+Once the Developer Program membership is active:
 
 ```
+scripts/devid-setup.sh request           # makes a signing request to upload
+# ... download the certificate from developer.apple.com ...
+scripts/devid-setup.sh install ~/Downloads/developerID_application.cer
+
 xcrun notarytool store-credentials harf-notary \
     --apple-id <you@example.com> --team-id <TEAMID> \
-    --password <app-specific-password>          # once
+    --password <app-specific-password>   # from appleid.apple.com, not your
+                                         # account password
 
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 NOTARY_PROFILE=harf-notary \
 TAP_REPO=alialhawas/homebrew-harf \
     ./scripts/release.sh
 ```
+
+The private key is generated locally and never sent to Apple; only the signing
+request, which carries the public half, is uploaded.
 
 The release script refuses to start if the identity is not a Developer ID, if
 it is not in the keychain, or if the notary profile does not exist — the three
