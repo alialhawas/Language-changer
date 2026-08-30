@@ -14,6 +14,25 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resour
 TAG="v${VERSION}"
 DMG="build/${APP_NAME}-${VERSION}.dmg"
 
+# Notarisation has three hard prerequisites and fails late and cryptically when
+# any is missing, so they are checked before anything is built or uploaded.
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+  : "${SIGN_IDENTITY:?NOTARY_PROFILE is set, so SIGN_IDENTITY must name your Developer ID Application certificate}"
+  case "$SIGN_IDENTITY" in
+    "Developer ID"*) ;;
+    *) echo "error: '$SIGN_IDENTITY' is not a Developer ID. Apple only notarises Developer ID signatures." >&2; exit 1 ;;
+  esac
+  if ! security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
+    echo "error: no code-signing identity matching '$SIGN_IDENTITY' in the keychain." >&2
+    exit 1
+  fi
+  if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+    echo "error: no stored notarytool credentials named '$NOTARY_PROFILE'. Create them once with:" >&2
+    echo "    xcrun notarytool store-credentials $NOTARY_PROFILE --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific-password>" >&2
+    exit 1
+  fi
+fi
+
 echo "==> Building ${APP_NAME} ${VERSION}"
 make build bundle sign >/dev/null
 ./scripts/make-dmg.sh >/dev/null
@@ -27,12 +46,36 @@ echo "    sha256 $SHA"
 # NOTARY_PROFILE set, these three lines are the whole difference.
 if [ -n "${NOTARY_PROFILE:-}" ]; then
   echo "==> Notarising (profile $NOTARY_PROFILE)"
+  # The disk image is signed too, so the download itself carries a verifiable
+  # origin rather than only the app inside it.
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
   xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$DMG"
   SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"   # stapling rewrites the file
   echo "    stapled; sha256 now $SHA"
+  spctl -a -t open --context context:primary-signature -vv "$DMG"
+  NOTARISED=yes
 else
   echo "==> Not notarised (set NOTARY_PROFILE to change that)"
+  NOTARISED=no
+fi
+
+if [ "$NOTARISED" = yes ]; then
+  NOTES="sha256  ${SHA}
+
+Signed with a Developer ID, notarised by Apple and stapled, so it opens without
+a Gatekeeper prompt.
+
+Verify the download before you trust it:
+    shasum -a 256 ${APP_NAME}-${VERSION}.dmg"
+else
+  NOTES="sha256  ${SHA}
+
+Not notarised by Apple. macOS will refuse it the first time; allow it once under
+System Settings > Privacy & Security > Open Anyway, which leaves Gatekeeper on.
+
+Verify the download before you trust it:
+    shasum -a 256 ${APP_NAME}-${VERSION}.dmg"
 fi
 
 echo "==> Publishing $TAG to $REPO"
@@ -41,13 +84,7 @@ if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
 else
   gh release create "$TAG" "$DMG" --repo "$REPO" \
     --title "${APP_NAME} ${VERSION}" \
-    --notes "sha256  ${SHA}
-
-Not notarised by Apple. macOS will refuse it the first time; allow it once under
-System Settings > Privacy & Security > Open Anyway, which leaves Gatekeeper on.
-
-Verify the download before you trust it:
-    shasum -a 256 ${APP_NAME}-${VERSION}.dmg"
+    --notes "$NOTES"
 fi
 
 echo "==> Refreshing the cask"
@@ -61,6 +98,11 @@ body = re.sub(r'sha256 "[a-f0-9]+"', 'sha256 "%s"' % sha, body)
 open(path, "w").write(body)
 print("    Casks updated to %s" % version)
 PY
+
+if [ "$NOTARISED" = yes ] && grep -q "not notarised" "Casks/${CASK_TOKEN}.rb"; then
+  echo "    NOTE: this build is notarised but Casks/${CASK_TOKEN}.rb still tells"
+  echo "          users to click Open Anyway. Edit the caveats block."
+fi
 
 if [ -n "$TAP_REPO" ]; then
   echo "==> Pushing the cask to $TAP_REPO"

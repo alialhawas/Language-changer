@@ -152,16 +152,41 @@ Everything above works, and none of it is how a shipped Mac app should feel. The
 Gatekeeper friction has one cause: the app is not notarised. Fixing that is not a
 code change:
 
-| | |
-|---|---|
-| Apple Developer Program | $99/year |
-| Developer ID Application certificate | issued by Apple, replaces the self-signed one |
-| Hardened runtime + timestamp | flags on the existing `codesign` step |
-| Notarisation | `xcrun notarytool submit`, then `xcrun stapler staple` |
+| | | |
+|---|---|---|
+| Hardened runtime | required by Apple before it will notarise | done — every build |
+| Secure timestamp | required by Apple before it will notarise | done — Developer ID builds |
+| Apple Developer Program | $99/year | you |
+| Developer ID Application certificate | issued by Apple, replaces the self-signed one | you |
+| Notarisation and stapling | `scripts/release.sh` runs both | done |
 
-With those, the disk image opens with a double-click and no warning, and the
-Homebrew cask installs without a prompt. Nothing else about the app
-changes.
+The build already carries the hardened runtime, and it needs no entitlement
+exceptions to do so: Accessibility and Input Monitoring are TCC grants rather
+than entitlements, so there is no entitlements file to get wrong. Only the
+certificate is missing.
+
+Once the Developer Program membership exists:
+
+```
+xcrun notarytool store-credentials harf-notary \
+    --apple-id <you@example.com> --team-id <TEAMID> \
+    --password <app-specific-password>          # once
+
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+NOTARY_PROFILE=harf-notary \
+TAP_REPO=alialhawas/homebrew-harf \
+    ./scripts/release.sh
+```
+
+The release script refuses to start if the identity is not a Developer ID, if
+it is not in the keychain, or if the notary profile does not exist — the three
+failures that otherwise surface only after a build has been uploaded.
+
+With that, the disk image opens with a double-click and no warning, and the
+Homebrew cask installs without a prompt. Nothing else about the app changes,
+with one exception worth expecting: a Developer ID signature is a different
+designated requirement from the self-signed one, so the first notarised build
+you install will ask for Accessibility and Input Monitoring again.
 
 
 ### 1. A stable code-signing identity (once)
