@@ -51,10 +51,10 @@ Verify the download before you trust it:
 fi
 
 echo "==> Refreshing the cask"
-python3 - "$SHA" "$VERSION" <<'PY'
+python3 - "$SHA" "$VERSION" "$CASK_TOKEN" <<'PY'
 import re, sys
 sha, version = sys.argv[1], sys.argv[2]
-path = "Casks/%s.rb" % __import__("os").environ.get("CASK_TOKEN", "dodoma")
+path = "Casks/%s.rb" % sys.argv[3]
 body = open(path).read()
 body = re.sub(r'version "[^"]+"', 'version "%s"' % version, body)
 body = re.sub(r'sha256 "[a-f0-9]+"', 'sha256 "%s"' % sha, body)
