@@ -113,7 +113,12 @@ if [ -n "$TAP_REPO" ]; then
   git -C "$TMP/tap" add -A
   git -C "$TMP/tap" commit -q -m "${CASK_TOKEN} ${VERSION}" || echo "    (nothing to commit)"
   git -C "$TMP/tap" push -q
-  echo "    users can now run: brew install --cask ${TAP_REPO%%/*}/${TAP_REPO##*homebrew-}/${CASK_TOKEN}"
+  # The qualified form is deliberate: Homebrew 6 treats installing a fully
+  # qualified cask as trusting that one cask, so it needs no `brew trust` step
+  # and grants nothing to the rest of the tap.
+  echo "    users can now run:"
+  echo "        brew tap ${TAP_REPO%%/*}/${TAP_REPO##*homebrew-}"
+  echo "        brew install --cask ${TAP_REPO%%/*}/${TAP_REPO##*homebrew-}/${CASK_TOKEN}"
 else
   echo "==> TAP_REPO not set; the cask was refreshed locally but not published"
 fi

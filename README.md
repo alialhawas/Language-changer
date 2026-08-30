@@ -105,11 +105,16 @@ Settings → Privacy & Security**, scroll to the message naming Harf, and press
 Harf installs from its own tap:
 
     brew tap alialhawas/harf
-    brew trust alialhawas/harf
-    brew install harf
+    brew install --cask alialhawas/harf/harf
 
-Homebrew 6 requires the trust step for any tap outside its own index; without it
-the cask is refused before it is read. After that the short name works.
+Homebrew 6 refuses to load a cask from any tap outside its own index unless you
+have trusted it. Installing by its fully qualified name is the trust: it grants
+trust to that one cask and nothing else, which is why there is no `brew trust`
+step above. `brew trust alialhawas/harf` is the alternative — it trusts the
+whole tap, present and future, and then the short name `brew install harf`
+works. Prefer the qualified form.
+
+Homebrew 6 does not tap on your behalf, so the `brew tap` line is required.
 
 macOS will still refuse the app the first time, because it is not notarised.
 Allow it once under **System Settings → Privacy & Security → Open Anyway**.
@@ -119,10 +124,20 @@ The flag turns Gatekeeper off for the install, and Harf asks for the two most
 powerful permissions macOS grants — that is precisely the combination where the
 check is worth keeping.
 
-It is not in `homebrew/cask` itself. That requires 225 stars for a
-self-submission, or 75 from someone else, on a repository at least 30 days old —
-a popularity bar, not a quality one. A tap needs none of it and the install
-command is one word longer.
+It is not in `homebrew/cask` itself, which is what would make a bare
+`brew install harf` work with no tap line at all. Two separate bars stand in the
+way, and only one of them is about popularity:
+
+* **Gatekeeper.** `homebrew/cask` requires that an app Gatekeeper can assess
+  passes its checks, and that installing it never requires Gatekeeper to be
+  bypassed. An unnotarised build fails that outright, so no amount of
+  popularity would get this in as it stands.
+* **Notability.** At least 225 stars, 90 forks or 90 watchers for a
+  self-submission by the repository owner — 75 stars if someone else submits it
+  — on a repository at least 30 days old.
+
+The first is the one that matters, and it is the same $99 as everything else on
+this page. A tap needs neither.
 
 The cask also puts the binary on your PATH as `harf`, so every setting is
 readable and writable from a shell:
