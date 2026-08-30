@@ -103,7 +103,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         modeItem = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
 
         idleImage = NSImage(
-            systemSymbolName: "character.book.closed", accessibilityDescription: "Dodoma")
+            systemSymbolName: "character.book.closed", accessibilityDescription: "Harf")
 
         super.init()
 

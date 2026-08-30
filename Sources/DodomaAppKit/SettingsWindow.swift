@@ -271,7 +271,7 @@ private struct SettingsView: View {
                 .fill(DodomaTheme.accent)
                 .frame(width: 7, height: 7)
                 .shadow(color: DodomaTheme.accent.opacity(0.8), radius: 5)
-            Text("DODOMA")
+            Text("HARF")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .kerning(2.4)
                 .foregroundStyle(DodomaTheme.accent)
