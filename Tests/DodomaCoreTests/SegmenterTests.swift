@@ -185,4 +185,46 @@ final class SegmenterTests: XCTestCase {
         let region = try XCTUnwrap(fixture.segment(keys))
         XCTAssertEqual(region.typedText, "hkh hsmdih")
     }
+
+    /// Regression: an accidental token that parses as valid morphology of the
+    /// language on screen used to collapse the region to nothing usable.
+    ///
+    /// "how we trun it" typed on the Arabic layout gives اخص صث فقعر هف. فقعر
+    /// is not in the dictionary, but stripping its ف clitic leaves قعر —
+    /// "depth" — so it reads as real Arabic and walled the walk off. The
+    /// region became هف alone: two letters, discarded for being too short,
+    /// and nothing was offered for a sentence that is plainly English.
+    func testAnAccidentalRealWordDoesNotCollapseTheRegion() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.arabicKeys("اخص صث فقعر هف")
+        let region = try XCTUnwrap(fixture.segment(keys, typedLanguage: .arabic))
+
+        XCTAssertEqual(region.typedText, "اخص صث فقعر هف")
+        XCTAssertEqual(region.tokenCount, 4)
+    }
+
+    /// The counting that makes the case above work, stated directly: three
+    /// tokens for English against the one accident. Averaging the same run
+    /// yields a 0.32 separation, which no auto rule accepts.
+    func testTheTallyCountsTokensRatherThanAveragingThem() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.arabicKeys("اخص صث فقعر هف")
+        let region = try XCTUnwrap(fixture.segment(keys, typedLanguage: .arabic))
+
+        XCTAssertEqual(region.alternateVotes, 3)
+        XCTAssertEqual(region.currentVotes, 1)
+    }
+
+    /// The limit on that rule. A majority may reach past a word only when the
+    /// word could plausibly have been produced by the wrong layout. "report"
+    /// renders to قثحخقف, which scores zero as Arabic, so it bounds the region
+    /// however many gibberish tokens surround it — here four against one.
+    func testAMajorityDoesNotReachPastADeliberateWord() throws {
+        let fixture = try DetectorFixture.make()
+        let keys = try fixture.latinKeys("hkh hsmdih report hkh hsmdih")
+        let region = try XCTUnwrap(fixture.segment(keys))
+
+        XCTAssertEqual(region.typedText, "hkh hsmdih")
+    }
+
 }
