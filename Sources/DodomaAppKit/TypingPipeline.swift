@@ -66,7 +66,11 @@ final class TypingPipeline {
     private let session: TypingSession
     /// This user's own vocabulary. One instance, shared by both language
     /// models, so a word learned in English is not credited to Arabic.
-    let lexicon = UserLexicon(url: UserLexicon.defaultURL())
+    ///
+    /// Injected rather than constructed here because the settings window shows
+    /// and edits the same words. Two instances over one file would each hold a
+    /// stale copy of the other's writes, and the last one to save would win.
+    let lexicon: UserLexicon
 
     private let fixEngine: FixApplying
     private let settings: SettingsStore
@@ -147,9 +151,11 @@ final class TypingPipeline {
         frontmost: FrontmostAppTracker,
         secureInput: SecureInputReading,
         suggestionState: SuggestionState,
+        lexicon: UserLexicon? = nil,
         fixEngine: FixApplying? = nil,
         focus: FocusInspecting? = nil
     ) {
+        self.lexicon = lexicon ?? UserLexicon(url: UserLexicon.defaultURL())
         self.settings = settings
         self.frontmost = frontmost
         self.secureInput = secureInput

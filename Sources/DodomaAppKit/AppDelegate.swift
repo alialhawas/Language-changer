@@ -28,6 +28,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The one piece of state the event tap thread, the pipeline queue and the
     /// main thread all touch. Created here so no one of the three owns it.
     private let suggestionState = SuggestionState()
+    /// Owned here, not by the pipeline, because the settings window reads and
+    /// edits the same words and both must see one file.
+    private let lexicon = UserLexicon(url: UserLexicon.defaultURL())
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Harf \(DodomaCore.Dodoma.version, privacy: .public) starting")
@@ -43,7 +46,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             debugWindow?.show()
         }
 
-        let settingsWindow = SettingsWindowController(settings: settings)
+        let settingsWindow = SettingsWindowController(settings: settings, lexicon: lexicon)
         settingsWindowController = settingsWindow
         controller.onShowSettings = { [weak settingsWindow] in
             settingsWindow?.show()
@@ -59,7 +62,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let pipeline = TypingPipeline(
             settings: settings, frontmost: frontmost, secureInput: secureInput,
-            suggestionState: suggestionState)
+            suggestionState: suggestionState, lexicon: lexicon)
 
         // The panel borrows the pipeline's accessibility oracle rather than
         // making a second one: the caret lookup and the security check have to

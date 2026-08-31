@@ -20,6 +20,17 @@ struct AppPolicyRow: Identifiable, Equatable {
     }
 }
 
+/// One word in the vocabulary tab, promoted or still counting.
+struct VocabularyRow: Identifiable, Equatable {
+    var id: String { word }
+    let word: String
+    let count: Int
+    /// Already treated as a real word rather than still accumulating.
+    let promoted: Bool
+    /// Added by hand, so it never had to reach the threshold.
+    let manual: Bool
+}
+
 /// Main-thread mirror of the settings blob, plus the two things that live
 /// outside it: the login-item registration and the resolved app names.
 ///
@@ -32,11 +43,18 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var policyRows: [AppPolicyRow] = []
     @Published private(set) var skipRows: [AppPolicyRow] = []
     @Published private(set) var loginStatus: LoginItemStatus = .disabled
+    @Published private(set) var vocabRows: [VocabularyRow] = []
+    /// Which language's words the vocabulary tab is showing.
+    @Published var vocabLanguage: Language = .english {
+        didSet { if vocabLanguage != oldValue { rebuildVocabulary() } }
+    }
 
     private let store: SettingsStore
+    private let lexicon: UserLexicon
 
-    init(store: SettingsStore) {
+    init(store: SettingsStore, lexicon: UserLexicon) {
         self.store = store
+        self.lexicon = lexicon
         settings = store.settings
         // The rows are deliberately not built here. This model is created at
         // launch for a window that may never be opened, and building them costs
@@ -52,7 +70,52 @@ final class SettingsModel: ObservableObject {
     func refresh() {
         settings = store.settings
         rebuildRows()
+        rebuildVocabulary()
         refreshLoginStatus()
+    }
+
+    /// Rebuilt on show and after every edit, never continuously: words are
+    /// counted on the typing queue and a list that renumbered itself while
+    /// being read would be worse than one that is a few seconds old.
+    private func rebuildVocabulary() {
+        let language = vocabLanguage
+        let manual = Set(lexicon.manualWords(language))
+        let known = lexicon.learned(language).map {
+            VocabularyRow(
+                word: $0.word, count: $0.count, promoted: true,
+                manual: manual.contains($0.word))
+        }
+        // Manual entries never accumulate a count, so `learned` cannot see
+        // them; without this they would vanish the moment they were added.
+        let listed = Set(known.map(\.word))
+        let byHand = manual.subtracting(listed).sorted().map {
+            VocabularyRow(word: $0, count: 0, promoted: true, manual: true)
+        }
+        let waiting = lexicon.pending(language).map {
+            VocabularyRow(word: $0.word, count: $0.count, promoted: false, manual: false)
+        }
+        vocabRows = known + byHand + waiting
+    }
+
+    // MARK: - Vocabulary
+
+    func addWord(_ word: String) {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        lexicon.add(trimmed, language: vocabLanguage)
+        _ = lexicon.save()
+        rebuildVocabulary()
+    }
+
+    func removeWord(_ word: String) {
+        lexicon.remove(word, language: vocabLanguage)
+        _ = lexicon.save()
+        rebuildVocabulary()
+    }
+
+    func eraseVocabulary() {
+        lexicon.clear()
+        rebuildVocabulary()
     }
 
     func refreshLoginStatus() {
@@ -173,8 +236,8 @@ final class SettingsWindowController {
     let model: SettingsModel
     private var window: NSWindow?
 
-    init(settings: SettingsStore) {
-        model = SettingsModel(store: settings)
+    init(settings: SettingsStore, lexicon: UserLexicon) {
+        model = SettingsModel(store: settings, lexicon: lexicon)
     }
 
     var isVisible: Bool { window?.isVisible == true }
@@ -252,6 +315,8 @@ private struct SettingsView: View {
                         .tabItem { Text("General") }
                     ApplicationsTab(model: model)
                         .tabItem { Text("Applications") }
+                    VocabularyTab(model: model)
+                        .tabItem { Text("Vocabulary") }
                     AdvancedTab(model: model)
                         .tabItem { Text("Advanced") }
                 }
@@ -454,6 +519,107 @@ private struct ApplicationsTab: View {
             prompt: "Choose an application to give its own mode.")
         else { return }
         model.addPolicy(for: bundleID)
+    }
+}
+
+private struct VocabularyTab: View {
+    @ObservedObject var model: SettingsModel
+    @State private var newWord: String = ""
+    @State private var confirmingErase = false
+
+    private var known: Int { model.vocabRows.filter(\.promoted).count }
+    private var waiting: Int { model.vocabRows.count - known }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("", selection: $model.vocabLanguage) {
+                Text("English").tag(Language.english)
+                Text("العربية").tag(Language.arabic)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Text("The bundled word lists come from subtitles, so the words you use at work "
+                + "score as nonsense. Harf counts the words it sees you type and keeps "
+                + "them at \(UserLexicon.promotionThreshold) sightings, which stops your own "
+                + "vocabulary from dragging a reading down. It counts typos too — it can "
+                + "only tell wrong layout from right, not right spelling from wrong — so "
+                + "this is the list to prune.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !model.settings.learnVocabulary {
+                Label("Learning is off. Nothing new is counted; words added by hand still "
+                    + "count.", systemImage: "pause.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(known) known · \(waiting) on the way")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            List {
+                ForEach(model.vocabRows) { row in
+                    HStack(spacing: 8) {
+                        // Monospaced suits Latin tokens, which are often
+                        // command names, and ruins Arabic: fixed advance widths
+                        // stretch the joins between letters until a word reads
+                        // as separated characters.
+                        Text(row.word)
+                            .font(.system(
+                                size: 13,
+                                design: model.vocabLanguage == .arabic ? .default : .monospaced))
+                        Spacer()
+                        Text(label(for: row))
+                            .font(.caption2)
+                            .foregroundStyle(row.promoted ? .primary : .secondary)
+                        Button {
+                            model.removeWord(row.word)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Forget this word.")
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+
+            HStack(spacing: 8) {
+                TextField("Add a word Harf should always accept", text: $newWord)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { commit() }
+                Button("Add") { commit() }
+                    .disabled(newWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Erase all…") { confirmingErase = true }
+            }
+            .confirmationDialog(
+                "Erase every learned word?",
+                isPresented: $confirmingErase,
+                titleVisibility: .visible
+            ) {
+                Button("Erase", role: .destructive) { model.eraseVocabulary() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Both languages, including words added by hand. Harf starts counting "
+                    + "again from nothing.")
+            }
+        }
+    }
+
+    private func commit() {
+        model.addWord(newWord)
+        newWord = ""
+    }
+
+    /// Manual entries have no count to show, and saying "0/10" next to a word
+    /// that is already accepted would read as the opposite of the truth.
+    private func label(for row: VocabularyRow) -> String {
+        if row.manual { return "added by hand" }
+        if row.promoted { return "known · seen \(row.count)×" }
+        return "\(row.count)/\(UserLexicon.promotionThreshold)"
     }
 }
 
