@@ -157,7 +157,7 @@ final class FocusOracle {
         _ = AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
 
         guard let focused = element(application, kAXFocusedUIElementAttribute) else {
-            return .unavailable
+            return Self.withoutFocusedElement(trusted: AXIsProcessTrusted())
         }
         _ = AXUIElementSetMessagingTimeout(focused, Self.messagingTimeout)
 
@@ -167,6 +167,33 @@ final class FocusOracle {
         }
         return FocusInspection(
             security: security, caretRead: caretRead(of: focused, length: caretTextLength))
+    }
+
+    /// What an application that reports no focused element at all means.
+    ///
+    /// It has two very different causes and they were collapsed into one.
+    /// Without the accessibility grant the nil says only that we are blind: the
+    /// app may well have text and a caret, and nothing may be concluded. With
+    /// the grant in hand, the same nil is the application telling us it has no
+    /// accessibility text surface — Ghostty and other terminals that draw their
+    /// own cells answer exactly this, no focused element and no windows.
+    ///
+    /// That second case is the structural silence `caretRead` already names
+    /// `.unreadable` one level down for an element that exposes no value. The
+    /// distinction matters: `.unreadable` lets a rewrite the user *asked* for
+    /// by pressing the accept key go ahead, while `.unavailable` refuses it.
+    /// Collapsing them meant Harf could do nothing in such an app — not an
+    /// automatic fix, which is right, but not an accepted suggestion either,
+    /// which left the user with a card that did nothing when pressed.
+    ///
+    /// Automatic rewrites stay blocked either way: `.unreadable` only proceeds
+    /// under `.bestEffort`, and the automatic path asks for `.required`.
+    ///
+    /// Split out as a pure function so both branches are testable; everything
+    /// around it needs a live accessibility grant and a focused application.
+    static func withoutFocusedElement(trusted: Bool) -> FocusInspection {
+        guard trusted else { return .unavailable }
+        return FocusInspection(security: .unknown, caretRead: .unreadable)
     }
 
     /// A password field answers with the secure subrole. A few older Carbon and
