@@ -12,6 +12,10 @@ enum CLIConfig {
     // MARK: - Status
 
     /// Everything the app currently believes, in one screen.
+    ///
+    /// Every setting, not a summary of them: someone reaching for this wants to
+    /// know why an app is behaving as it is, and a count of configured apps
+    /// cannot answer that.
     static func status(_ store: SettingsStore, lexicon: UserLexicon) -> Int32 {
         let s = store.settings
         let permissions = Permissions.current()
@@ -22,20 +26,65 @@ enum CLIConfig {
         print("  accessibility    \(mark(permissions.accessibility))")
         print("  input monitoring \(mark(permissions.inputMonitoring))")
         print("")
+        print("  launch at login  \(label(LoginItem.status))")
+        print("  shortcuts        \(SettingsCopy.undoChord) undo, "
+            + "\(SettingsCopy.pauseChord) pause")
+        print("")
         print("  paused           \(mark(s.paused))")
         print("  sensitivity      \(s.aggressiveness.rawValue)")
         print("  confident score  \(s.confidentScore.map { pct($0) } ?? "off")")
-        print("  buffer           \(s.bufferCapacity) keystrokes, dropped after \(Int(s.idleTimeout))s idle")
+        print("  buffer           \(s.bufferCapacity) keystrokes")
+        print("  idle             \(Int(s.idleTimeout))s, then the buffer is dropped")
         print("  learning words   \(mark(s.learnVocabulary))")
         print("  debug logging    \(mark(s.debugLogging))")
-        print("  default policy   \(s.defaultPolicy.rawValue)")
         print("")
-        print("  apps configured  \(s.appPolicies.count)")
-        print("  skipping verify  \(s.axVerifySkip.count)")
+
+        // Printed in full rather than counted. A count answers "is anything
+        // configured", which is never the question someone runs --status to
+        // settle; they want to know why a particular app is behaving as it is.
+        print("  default policy   \(s.defaultPolicy.rawValue)   (every app not listed below)")
+        if s.appPolicies.isEmpty {
+            print("  per-app modes    none")
+        } else {
+            print("  per-app modes    \(s.appPolicies.count)")
+            for (id, policy) in s.appPolicies.sorted(by: { $0.key < $1.key }) {
+                print("      \(pad(id))  \(policy.rawValue)")
+            }
+        }
+        print("")
+
+        if s.axVerifySkip.isEmpty {
+            print("  skipping verify  none")
+        } else {
+            print("  skipping verify  \(s.axVerifySkip.count)   (rewrites go ahead unverified)")
+            for id in s.axVerifySkip.sorted() { print("      \(id)") }
+        }
+        print("")
+
         let learned = lexicon.learned(.english).count + lexicon.learned(.arabic).count
         let manual = lexicon.manualWords(.english).count + lexicon.manualWords(.arabic).count
-        print("  words learned    \(learned)  (\(manual) added by hand)")
+        let pending = lexicon.pending(.english).count + lexicon.pending(.arabic).count
+        print("  words learned    \(learned)  (\(manual) added by hand, \(pending) on the way)")
+        print("  vocabulary file  \(UserLexicon.defaultURL()?.path ?? "not available")")
         return 0
+    }
+
+    /// A word for the login-item state. `explanation` is a paragraph meant for
+    /// a settings pane; a status line needs the state itself.
+    private static func label(_ status: LoginItemStatus) -> String {
+        switch status {
+        case .enabled: return "yes"
+        case .disabled: return "no"
+        case .requiresApproval: return "waiting for approval in System Settings"
+        case .notFound: return "registered copy missing — switch it off and on again"
+        case .unavailable: return "unavailable (not running from a bundled app)"
+        }
+    }
+
+    /// Bundle identifiers vary in length; a fixed column keeps the modes
+    /// readable as a column rather than a ragged edge.
+    private static func pad(_ text: String) -> String {
+        text.padding(toLength: max(30, text.count), withPad: " ", startingAt: 0)
     }
 
     /// The settings as JSON, for scripting and for `diff`.
@@ -96,13 +145,16 @@ enum CLIConfig {
             guard let policy = AppPolicy(rawValue: raw) else { return badPolicy(raw) }
             store.setDefaultPolicy(policy)
         default:
-            return CLI.fail(
-                "--set: unknown key '\(key)'. Known keys: paused, sensitivity, confident, "
-                    + "debugLogging, defaultPolicy",
-                code: 2)
+            return CLI.fail(unknownKeyMessage(key), code: 2)
         }
         print("\(key) = \(raw)")
         return 0
+    }
+
+    /// Named so a test can hold it to the same list the switch above accepts.
+    static func unknownKeyMessage(_ key: String) -> String {
+        "--set: unknown key '\(key)'. Known keys: paused, sensitivity, confident, "
+            + "buffer, idle, learn, debugLogging, defaultPolicy"
     }
 
     // MARK: - Per-app policy

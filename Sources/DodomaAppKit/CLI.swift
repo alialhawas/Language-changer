@@ -27,14 +27,33 @@ public enum CLI {
         harf — fixes text typed with the wrong keyboard layout
 
         Configuration
-          --status                     permissions, settings and vocabulary at a glance
-          --config                     the settings as JSON
-          --set KEY VALUE              paused | sensitivity | confident | buffer | idle
-                                       | learn | debugLogging | defaultPolicy
+          --status                     every setting, permission and list, in full
+          --config                     the same thing as JSON, for scripts and diffs
+          --set KEY VALUE              change one setting; keys and values below
           --words [list|add|remove|clear] [WORD] --lang en|ar
                                        your own vocabulary, kept in
                                        ~/Library/Application Support/Harf/lexicon.json
           --policy [BUNDLE_ID [MODE]]  list, read, or set an app's mode
+
+        Settings you can change            values                     default
+          paused                           yes | no                   no
+          sensitivity                      conservative | balanced    balanced
+                                           | eager
+          confident                        a score, 70 or 0.70,       90
+                                           or off
+          buffer                           20-500 keystrokes          200
+          idle                             seconds before the         10
+                                           buffer is dropped
+          learn                            yes | no                   yes
+          debugLogging                     yes | no                   no
+          defaultPolicy                    normal | suggestOnly       normal
+                                           | off
+
+          sensitivity moves the three automatic gates together. confident is a
+          separate shortcut for text too short for those gates: a reading at or
+          above it is applied however few letters there are, and `off` restores
+          the length rules. Turning sensitivity up while confident sits near
+          100 pulls in opposite directions.
 
         Per-app modes
           normal        replaces silently when one reading wins clearly, and
@@ -62,10 +81,16 @@ public enum CLI {
           --eval FILE.tsv              run a labelled corpus
 
         Examples
-          harf --set confident 70          fix short words scoring 70% or better
-          harf --policy com.apple.Terminal off
+          harf --status                      what is switched on right now
+          harf --set paused yes              stop everything, without quitting
+          harf --set sensitivity eager       act on weaker evidence
+          harf --set confident 70            fix short words scoring 70% or better
           harf --set buffer 60               hold less of what you type
+          harf --set idle 5                  forget it sooner after you stop
           harf --set learn off               stop remembering words, erase the file
+          harf --set defaultPolicy off       an allowlist: silent everywhere but
+                                             the apps you then set to normal
+          harf --policy com.apple.Terminal off
           harf --words add kubectl --lang en
           harf --decide "hgsghl ugd;l"
         """
