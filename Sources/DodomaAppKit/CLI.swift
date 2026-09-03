@@ -204,8 +204,12 @@ public enum CLI {
         if let message = preloadModels() { return fail("--score: \(message)", code: 1) }
         print("text: \(text)")
         print("lang   bigram  dict    combined")
+        // Same reasoning as `--decide`: this reports how the running app reads
+        // the text, and the app reads it with the user's own words counting.
+        let lexicon = sharedLexicon()
         for language in Language.allCases {
             let model = LanguageModel.shared(language)
+            model.lexicon = lexicon
             let score = model.combined(text)
             print(
                 String(
@@ -221,7 +225,7 @@ public enum CLI {
         _ text: String, language: String?, aggressiveness: String?, confident: String?
     ) -> Int32 {
         if let message = preloadModels() { return fail("--decide: \(message)", code: 1) }
-        guard let detector = liveDetector() else {
+        guard let detector = liveDetector(withLearnedWords: true) else {
             return fail(
                 "--decide: this machine needs both an English and an Arabic keyboard layout "
                     + "enabled in System Settings > Keyboard > Input Sources",
@@ -363,9 +367,23 @@ public enum CLI {
         return Aggressiveness(rawValue: raw)
     }
 
-    private static func liveDetector() -> Detector? {
+    /// - Parameter withLearnedWords: whether the user's own vocabulary counts.
+    ///
+    ///   `--decide` and `--score` say yes, because their whole job is to report
+    ///   what the running app would do, and the app scores with the lexicon
+    ///   attached; without it they quietly disagree with the thing they are
+    ///   describing. `--eval` says no: a corpus has to score the same on every
+    ///   machine, and a run whose numbers depend on what its operator has been
+    ///   typing lately is not a measurement.
+    private static func liveDetector(withLearnedWords: Bool = false) -> Detector? {
         guard let pair = LayoutEngine().currentPair() else { return nil }
-        return Detector(englishLayout: pair.english, arabicLayout: pair.arabic)
+        let detector = Detector(englishLayout: pair.english, arabicLayout: pair.arabic)
+        if withLearnedWords {
+            let lexicon = sharedLexicon()
+            detector.englishModel.lexicon = lexicon
+            detector.arabicModel.lexicon = lexicon
+        }
+        return detector
     }
 
     // MARK: - Existing commands
