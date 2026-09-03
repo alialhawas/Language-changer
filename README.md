@@ -142,7 +142,7 @@ this page. A tap needs neither.
 The cask also puts the binary on your PATH as `harf`, so every setting is
 readable and writable from a shell:
 
-    harf --status                  # permissions, settings, vocabulary
+    harf --status                  # every setting, permission and list
     harf --set confident 70        # fix short words scoring 70% or better
     harf --set buffer 60           # hold fewer keystrokes in memory
     harf --set idle 5              # drop them after 5s of silence
@@ -336,6 +336,46 @@ follow. The event tap keeps running so that unpausing needs no permission dance.
 typing in. The chords on **Settings…** and **Quit Harf** are ordinary menu key
 equivalents, and Harf has no menu bar of its own — it is an accessory app — so
 they only fire while one of its own windows is the key window. Use the menu.
+
+### Making one app replace, and another only suggest
+
+Every application is `normal` from the moment Harf is installed, including ones
+you install next month. You never have to add an app to make Harf work in it —
+you add one only to move it *away* from that default.
+
+| Mode | What the app gets |
+| --- | --- |
+| `normal` | Rewrites silently when one reading wins clearly, and offers a card when the two are close |
+| `suggestOnly` | Never deletes anything by itself. The card appears; **Tab** applies it, **esc** dismisses it, and so does carrying on typing |
+| `off` | Nothing is captured at all in that application |
+
+Three ways to set it, all writing the same value:
+
+- **Menu bar** — put the application in front, click the Harf icon, use
+  **Mode for &lt;app&gt;**. No identifier needed, and it names the app you were
+  just typing in.
+- **Settings → Applications** — **+ Add app…** picks one from `/Applications`;
+  the popup on its row sets the mode.
+- **Shell** — `harf --policy com.mitchellh.ghostty normal`.
+
+To find an identifier for the shell form:
+
+```
+osascript -e 'id of app "Ghostty"'      # com.mitchellh.ghostty
+harf --policy                           # every app already configured
+```
+
+Two things that are easy to get wrong. Removing a row does **not** switch Harf
+off for that app; it deletes your override so the app follows the default
+again. And `tmux` is not an application — it runs inside a terminal, so Harf
+sees Ghostty or Terminal and never tmux. Set the terminal.
+
+**`normal` is a ceiling, not a promise.** An application that exposes no
+accessibility text cannot be rewritten silently whatever its mode says, because
+Harf refuses to delete text it cannot verify first. Ghostty is the clear case:
+it reports no focused element and no windows at all. There you get a card, and
+**Tab** applies it. That is deliberate — a wrong rewrite in a shell is a mangled
+command.
 
 ### Settings
 
@@ -577,9 +617,87 @@ and the six must-run rows marked. Nothing in it can be checked by the test
 suite, and the destructive path is live in every application by default, so it
 is worth a run before trusting a build.
 
-## Command-line harness
+## Command line
 
-The executable also runs headless, with no permissions required:
+The same binary is the menu-bar app and the command line, so there is no second
+executable to install. The Homebrew cask puts it on your PATH as `harf`; from a
+checkout, `swift run Harf <args>` is the same thing. Both edit the settings the
+running app reads, so a change reaches it on its next evaluation — no restart.
+
+### Reading what is set
+
+`harf --status` prints every setting, permission and list in full:
+
+```
+Harf 1.0.0
+
+  running          yes
+  accessibility    yes
+  input monitoring yes
+
+  launch at login  yes
+  shortcuts        ⌥⌘Z undo, ⌥⌘P pause
+
+  paused           no
+  sensitivity      balanced
+  confident score  90%
+  buffer           200 keystrokes
+  idle             10s, then the buffer is dropped
+  learning words   yes
+  debug logging    no
+
+  default policy   normal   (every app not listed below)
+  per-app modes    14
+      com.apple.Terminal              suggestOnly
+      com.mitchellh.ghostty           normal
+      com.1password.1password         off
+      …
+
+  skipping verify  none
+
+  words learned    8  (0 added by hand, 394 on the way)
+  vocabulary file  /Users/you/Library/Application Support/Harf/lexicon.json
+```
+
+`harf --help` lists every command, every setting you can change, the values each
+one accepts and its default. `harf --config` prints the settings as JSON, for
+scripting and for `diff`.
+
+### Changing it
+
+```
+harf --set paused yes              stop everything, without quitting
+harf --set sensitivity eager       act on weaker evidence
+harf --set confident 70            fix short words scoring 70% or better
+harf --set buffer 60               hold fewer keystrokes in memory
+harf --set idle 5                  drop them after 5s of silence
+harf --set learn off               stop learning words, erase the file
+harf --set defaultPolicy off       an allowlist: silent everywhere except the
+                                   apps you then set to normal
+harf --policy com.apple.Terminal off
+harf --words add kubectl --lang en
+```
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `paused` | `yes` / `no` | `no` |
+| `sensitivity` | `conservative` / `balanced` / `eager` | `balanced` |
+| `confident` | a score, `70` or `0.70`, or `off` | `90` |
+| `buffer` | 20–500 keystrokes | `200` |
+| `idle` | seconds before the buffer is dropped | `10` |
+| `learn` | `yes` / `no` | `yes` |
+| `debugLogging` | `yes` / `no` | `no` |
+| `defaultPolicy` | `normal` / `suggestOnly` / `off` | `normal` |
+
+`sensitivity` moves the three automatic gates together. `confident` is a
+separate shortcut for text too short for those gates: a reading at or above it
+is applied however few letters there are, and `off` restores the length rules.
+They move independently, so turning `sensitivity` up while `confident` sits near
+100 pulls in opposite directions.
+
+### Inspecting a decision
+
+No permissions required for any of these:
 
 ```
 swift run Harf --render "HC MV; HKH HSMDIH HGDML"
@@ -603,6 +721,17 @@ swift run Harf --eval   Tests/DodomaCoreTests/Fixtures/corpus.tsv
 
 `--decide` and `--eval` need both an English and an Arabic input source enabled
 on the machine.
+
+`--preview-cards` opens a floating window showing the suggestion card and the
+learned-word card, rebuilding them every two seconds so their entrances replay.
+It exists because both are otherwise reachable only by reproducing what raises
+them — a specific phrase in a specific layout, or a word reaching its tenth
+sighting — which is a poor way to look at an animation. It must be run from the
+bundle:
+
+```
+build/Harf.app/Contents/MacOS/Harf --preview-cards
+```
 
 ## Building from source
 
