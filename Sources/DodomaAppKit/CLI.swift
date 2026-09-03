@@ -79,6 +79,8 @@ public enum CLI {
               [--lang en|ar] [--aggressiveness conservative|balanced|eager]
               [--confident 0.9]
           --eval FILE.tsv              run a labelled corpus
+          --preview-cards              watch the floating cards animate, without
+                                       reproducing what raises them
 
         Examples
           harf --status                      what is switched on right now
