@@ -101,4 +101,73 @@ extension UserLexiconTests {
             XCTAssertFalse(unknown.contains(ordinary), "\(ordinary) is already known")
         }
     }
+
+    // MARK: - Announcing a crossing
+
+    /// The card exists to make the one durable side effect visible, so the
+    /// crossing has to be reported at the moment it happens and not before.
+    func testObserveReportsTheWordThatCrossesTheThreshold() {
+        let lexicon = UserLexicon(url: nil)
+
+        for _ in 1..<UserLexicon.promotionThreshold {
+            XCTAssertTrue(
+                lexicon.observe(["kubectl"], language: .english).isEmpty,
+                "a word still counting has not changed how anything scores")
+        }
+
+        XCTAssertEqual(lexicon.observe(["kubectl"], language: .english), ["kubectl"])
+    }
+
+    /// Strictly the crossing. Announcing every sighting after the tenth would
+    /// turn a rare event into a recurring interruption for a word the user has
+    /// already been told about.
+    func testAWordAlreadyKnownIsNotAnnouncedAgain() {
+        let lexicon = UserLexicon(url: nil)
+        for _ in 0..<UserLexicon.promotionThreshold {
+            _ = lexicon.observe(["kubectl"], language: .english)
+        }
+
+        XCTAssertTrue(lexicon.observe(["kubectl"], language: .english).isEmpty)
+        XCTAssertTrue(lexicon.observe(["kubectl"], language: .english).isEmpty)
+    }
+
+    /// A word added by hand is known from the moment it is added; counting it
+    /// to ten afterwards is not news.
+    func testAManuallyAddedWordIsNeverAnnounced() {
+        let lexicon = UserLexicon(url: nil)
+        lexicon.add("kubectl", language: .english)
+
+        for _ in 0...UserLexicon.promotionThreshold {
+            XCTAssertTrue(lexicon.observe(["kubectl"], language: .english).isEmpty)
+        }
+    }
+
+    /// Several words can cross on one evaluation, and the card names them all.
+    func testEveryWordCrossingOnTheSamePassIsReported() {
+        let lexicon = UserLexicon(url: nil)
+        for _ in 1..<UserLexicon.promotionThreshold {
+            _ = lexicon.observe(["kubectl", "endpoint"], language: .english)
+        }
+
+        XCTAssertEqual(
+            Set(lexicon.observe(["kubectl", "endpoint"], language: .english)),
+            ["kubectl", "endpoint"])
+    }
+
+    /// Undo is a real removal, so a word can be learned again later rather than
+    /// being permanently suppressed.
+    func testAnUndoneWordCanBeLearnedAgain() {
+        let lexicon = UserLexicon(url: nil)
+        for _ in 0..<UserLexicon.promotionThreshold {
+            _ = lexicon.observe(["kubectl"], language: .english)
+        }
+        lexicon.remove("kubectl", language: .english)
+        XCTAssertFalse(lexicon.contains("kubectl", language: .english))
+
+        for _ in 1..<UserLexicon.promotionThreshold {
+            _ = lexicon.observe(["kubectl"], language: .english)
+        }
+        XCTAssertEqual(lexicon.observe(["kubectl"], language: .english), ["kubectl"])
+    }
+
 }

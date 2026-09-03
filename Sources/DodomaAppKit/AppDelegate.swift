@@ -31,6 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Owned here, not by the pipeline, because the settings window reads and
     /// edits the same words and both must see one file.
     private let lexicon = UserLexicon(url: UserLexicon.defaultURL())
+    private var learnedController: LearnedController?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Harf \(DodomaCore.Dodoma.version, privacy: .public) starting")
@@ -72,6 +73,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         suggestionController = suggestions
         suggestions.onTimeout = { [weak pipeline] in
             pipeline?.suggestionTimedOut()
+        }
+
+        // Shares the pipeline's oracle for the same reason the suggestion panel
+        // does: one serial queue for every accessibility call.
+        let learned = LearnedController(oracle: pipeline.focusOracle)
+        learnedController = learned
+        pipeline.onWordsLearned = { [weak self, weak learned] words, language, pid in
+            guard let self else { return }
+            learned?.show(words: words, language: language, pid: pid) { [weak self] in
+                guard let self else { return }
+                for word in words { self.lexicon.remove(word, language: language) }
+                _ = self.lexicon.save()
+                Log.app.info("\(words.count, privacy: .public) learned words undone")
+            }
         }
 
         pipeline.onChange = { [weak debugWindow] snapshot in

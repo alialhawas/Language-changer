@@ -58,6 +58,9 @@ final class TypingPipeline {
     /// the caret no longer matches or the field turned out to be secure.
     /// Silence there would look exactly like a broken key.
     var onRequestRejected: (() -> Void)?
+    /// Words that just crossed into the dictionary, the language they belong
+    /// to, and the app that was in front. Main thread.
+    var onWordsLearned: (([String], Language, pid_t?) -> Void)?
 
     /// Shared, cached view of the enabled keyboard layouts. Owned here because
     /// this is where the invalidation notification is observed.
@@ -514,8 +517,18 @@ final class TypingPipeline {
         // what is missing, and how often it is used.
         let unknown = model.vocabulary(in: text).filter { !model.isKnownWord($0) }
         guard !unknown.isEmpty else { return }
-        lexicon.observe(unknown, language: detection.typedLanguage)
+        let promoted = lexicon.observe(unknown, language: detection.typedLanguage)
         lexicon.saveIfDue()
+
+        // A crossing changes how everything after it scores, and it is the one
+        // thing here that outlives the session. Saying so is the difference
+        // between a dictionary the user owns and one that happens to them.
+        guard !promoted.isEmpty else { return }
+        let language = detection.typedLanguage
+        let pid = frontmost.current.processIdentifier
+        DispatchQueue.main.async { [weak self] in
+            self?.onWordsLearned?(promoted, language, pid)
+        }
     }
 
     private func evaluate() {

@@ -99,17 +99,34 @@ public final class UserLexicon: @unchecked Sendable {
     /// alone, which is the one moment the app has grounds to believe the words
     /// are real: it looked at the run, in this language, and found nothing to
     /// correct.
-    public func observe(_ tokens: [String], language: Language) {
+    /// - Returns: the words this call pushed over the threshold, in the order
+    ///   they were seen. Only the crossing counts: a word already known adds
+    ///   nothing to tell the user about, and one still counting has not
+    ///   changed how anything scores yet.
+    @discardableResult
+    public func observe(_ tokens: [String], language: Language) -> [String] {
         let worth = tokens.filter { $0.count >= Self.minimumLength }
-        guard !worth.isEmpty else { return }
+        guard !worth.isEmpty else { return [] }
         lock.lock(); defer { lock.unlock() }
         var store = stores[language.rawValue] ?? Store()
+        var promoted: [String] = []
         for token in worth {
-            store.counts[LanguageModel.normalize(token, for: language), default: 0] += 1
+            let key = LanguageModel.normalize(token, for: language)
+            let before = store.counts[key] ?? 0
+            let after = before + 1
+            store.counts[key] = after
+            // Strictly the crossing, so a word seen for the eleventh time does
+            // not announce itself again.
+            if before < Self.promotionThreshold, after >= Self.promotionThreshold,
+               !store.manual.contains(key)
+            {
+                promoted.append(key)
+            }
         }
         if store.counts.count > Self.capacity { evict(&store) }
         stores[language.rawValue] = store
         dirty = true
+        return promoted
     }
 
     public func add(_ word: String, language: Language) {
