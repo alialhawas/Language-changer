@@ -28,9 +28,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The one piece of state the event tap thread, the pipeline queue and the
     /// main thread all touch. Created here so no one of the three owns it.
     private let suggestionState = SuggestionState()
+    /// Owned here, not by the pipeline, because the settings window reads and
+    /// edits the same words and both must see one file.
+    private let lexicon = UserLexicon(url: UserLexicon.defaultURL())
+    private var learnedController: LearnedController?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.app.info("Dodoma \(DodomaCore.Dodoma.version, privacy: .public) starting")
+        Log.app.info("Harf \(DodomaCore.Dodoma.version, privacy: .public) starting")
 
         preloadLanguageModels()
 
@@ -43,7 +47,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             debugWindow?.show()
         }
 
-        let settingsWindow = SettingsWindowController(settings: settings)
+        let settingsWindow = SettingsWindowController(settings: settings, lexicon: lexicon)
         settingsWindowController = settingsWindow
         controller.onShowSettings = { [weak settingsWindow] in
             settingsWindow?.show()
@@ -59,7 +63,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let pipeline = TypingPipeline(
             settings: settings, frontmost: frontmost, secureInput: secureInput,
-            suggestionState: suggestionState)
+            suggestionState: suggestionState, lexicon: lexicon)
 
         // The panel borrows the pipeline's accessibility oracle rather than
         // making a second one: the caret lookup and the security check have to
@@ -69,6 +73,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         suggestionController = suggestions
         suggestions.onTimeout = { [weak pipeline] in
             pipeline?.suggestionTimedOut()
+        }
+
+        // Shares the pipeline's oracle for the same reason the suggestion panel
+        // does: one serial queue for every accessibility call.
+        let learned = LearnedController(oracle: pipeline.focusOracle)
+        learnedController = learned
+        pipeline.onWordsLearned = { [weak self, weak learned] words, language, pid in
+            guard let self else { return }
+            learned?.show(words: words, language: language, pid: pid) { [weak self] in
+                guard let self else { return }
+                for word in words { self.lexicon.remove(word, language: language) }
+                _ = self.lexicon.save()
+                Log.app.info("\(words.count, privacy: .public) learned words undone")
+            }
         }
 
         pipeline.onChange = { [weak debugWindow] snapshot in
@@ -194,6 +212,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        // What was learned this session outlives it.
+        pipeline?.lexicon.save()
+
         pollTimer?.invalidate()
         pollTimer = nil
         hotkeys.unregister()

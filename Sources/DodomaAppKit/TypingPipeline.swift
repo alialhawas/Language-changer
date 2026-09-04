@@ -58,12 +58,23 @@ final class TypingPipeline {
     /// the caret no longer matches or the field turned out to be secure.
     /// Silence there would look exactly like a broken key.
     var onRequestRejected: (() -> Void)?
+    /// Words that just crossed into the dictionary, the language they belong
+    /// to, and the app that was in front. Main thread.
+    var onWordsLearned: (([String], Language, pid_t?) -> Void)?
 
     /// Shared, cached view of the enabled keyboard layouts. Owned here because
     /// this is where the invalidation notification is observed.
     let layoutEngine = LayoutEngine()
 
     private let session: TypingSession
+    /// This user's own vocabulary. One instance, shared by both language
+    /// models, so a word learned in English is not credited to Arabic.
+    ///
+    /// Injected rather than constructed here because the settings window shows
+    /// and edits the same words. Two instances over one file would each hold a
+    /// stale copy of the other's writes, and the last one to save would win.
+    let lexicon: UserLexicon
+
     private let fixEngine: FixApplying
     private let settings: SettingsStore
     private let frontmost: FrontmostAppTracker
@@ -143,9 +154,11 @@ final class TypingPipeline {
         frontmost: FrontmostAppTracker,
         secureInput: SecureInputReading,
         suggestionState: SuggestionState,
+        lexicon: UserLexicon? = nil,
         fixEngine: FixApplying? = nil,
         focus: FocusInspecting? = nil
     ) {
+        self.lexicon = lexicon ?? UserLexicon(url: UserLexicon.defaultURL())
         self.settings = settings
         self.frontmost = frontmost
         self.secureInput = secureInput
@@ -269,6 +282,13 @@ final class TypingPipeline {
             } else {
                 self.paused = updated.paused
             }
+
+            // How much is held, and for how long, are privacy controls: apply
+            // them before anything else, and to the buffer as it already
+            // stands rather than only to what arrives next.
+            self.session.setBufferCapacity(updated.bufferCapacity)
+            self.session.idleTimeout = updated.idleTimeout
+            if !updated.learnVocabulary { self.lexicon.clear() }
 
             let policy = updated.policy(for: self.session.currentFrontmostBundleID)
             if policy == .off, self.frontmostPolicy != .off {
@@ -472,6 +492,45 @@ final class TypingPipeline {
 
     // MARK: - Evaluation
 
+    /// Counts the words of a run the detector examined and left alone.
+    ///
+    /// "Left alone" is the whole safeguard. It means the detector rendered the
+    /// keys under both layouts, scored them, and concluded the text already
+    /// reads as the language it is in — which is the only moment the app has
+    /// grounds to treat those words as this person's vocabulary rather than as
+    /// something waiting to be corrected. A run that produced a candidate is
+    /// never counted, however it was resolved, so wrong-layout text cannot
+    /// teach itself into the dictionary.
+    private func learnVocabulary(from detection: Detector.Detection, using detector: Detector) {
+        guard settings.learnVocabulary else { return }
+        guard case .ignore = detection.decision, detection.region == nil else { return }
+        let model = detector.model(for: detection.typedLanguage)
+        let text = session.currentText
+        guard !text.isEmpty else { return }
+        // Only words the shipped list does not already have.
+        //
+        // Counting everything meant the file filled with "the", "and" and
+        // "create" — words that were already known, so learning them changed
+        // no score, while the counts amounted to a frequency profile of
+        // ordinary writing sitting on disk. The gap this exists to close is
+        // the vocabulary the subtitle corpus lacks, so that is all it records:
+        // what is missing, and how often it is used.
+        let unknown = model.vocabulary(in: text).filter { !model.isKnownWord($0) }
+        guard !unknown.isEmpty else { return }
+        let promoted = lexicon.observe(unknown, language: detection.typedLanguage)
+        lexicon.saveIfDue()
+
+        // A crossing changes how everything after it scores, and it is the one
+        // thing here that outlives the session. Saying so is the difference
+        // between a dictionary the user owns and one that happens to them.
+        guard !promoted.isEmpty else { return }
+        let language = detection.typedLanguage
+        let pid = frontmost.current.processIdentifier
+        DispatchQueue.main.async { [weak self] in
+            self?.onWordsLearned?(promoted, language, pid)
+        }
+    }
+
     private func evaluate() {
         dispatchPrecondition(condition: .onQueue(queue))
 
@@ -510,15 +569,20 @@ final class TypingPipeline {
         }
 
         let detector = Detector(englishLayout: pair.english, arabicLayout: pair.arabic)
+        detector.englishModel.lexicon = lexicon
+        detector.arabicModel.lexicon = lexicon
         let started = Self.now()
         // Step (b), second half: `suggestOnly` is capped inside the decision
         // function, which is the one place that reads `AppPolicy`.
         guard
             let detection = session.evaluate(
                 detector: detector, policy: policy, aggressiveness: settings.aggressiveness,
+                confidentScore: settings.confidentScore,
                 recentlyUndone: undoSuppression.texts(bundleID: bundleID, at: now))
         else { return }
         let duration = Self.now() - started
+
+        learnVocabulary(from: detection, using: detector)
 
         let snapshot = DecisionSnapshot(
             detection: detection, policy: policy, bundleID: bundleID, duration: duration,
@@ -543,7 +607,7 @@ final class TypingPipeline {
         // The one interpolation in the project that is deliberately public:
         // redacting it would make the opt-in flag pointless.
         Log.decision.info(
-            "\(snapshot.verdict, privacy: .public) region=\(snapshot.regionText, privacy: .public) cur=\(snapshot.currentScore, format: .fixed(precision: 2), privacy: .public) alt=\(snapshot.alternateScore, format: .fixed(precision: 2), privacy: .public) guards=\(snapshot.guards, privacy: .public) reason=\(snapshot.reason, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
+            "\(snapshot.verdict, privacy: .public) region=\(snapshot.regionText, privacy: .private) cur=\(snapshot.currentScore, format: .fixed(precision: 2), privacy: .public) alt=\(snapshot.alternateScore, format: .fixed(precision: 2), privacy: .public) guards=\(snapshot.guards, privacy: .public) reason=\(snapshot.reason, privacy: .public) in \(snapshot.durationMillis, format: .fixed(precision: 1), privacy: .public) ms"
         )
     }
 
